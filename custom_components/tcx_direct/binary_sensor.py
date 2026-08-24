@@ -7,6 +7,7 @@ from homeassistant.components.binary_sensor import (
     BinarySensorEntity,
     BinarySensorEntityDescription,
 )
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -37,28 +38,28 @@ BINARY_SENSORS = (
         data_key="connected",
         name="Connection",
         device_class=BinarySensorDeviceClass.CONNECTIVITY,
-        entity_category="diagnostic",
+        entity_category=EntityCategory.DIAGNOSTIC,
     ),
     TCXBinaryDescription(
         key="websocket_connection",
         data_key="websocket_connected",
         name="WebSocket Connection",
         device_class=BinarySensorDeviceClass.CONNECTIVITY,
-        entity_category="diagnostic",
+        entity_category=EntityCategory.DIAGNOSTIC,
     ),
     TCXBinaryDescription(
         key="websocket_stream",
         data_key="websocket_stream_healthy",
         name="WebSocket Stream",
         device_class=BinarySensorDeviceClass.CONNECTIVITY,
-        entity_category="diagnostic",
+        entity_category=EntityCategory.DIAGNOSTIC,
     ),
     TCXBinaryDescription(
         key="cloud_connection",
         data_key="cloud_reachable",
         name="Cloud Connection",
         device_class=BinarySensorDeviceClass.CONNECTIVITY,
-        entity_category="diagnostic",
+        entity_category=EntityCategory.DIAGNOSTIC,
     ),
 )
 
