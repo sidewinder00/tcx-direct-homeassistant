@@ -1,10 +1,8 @@
 name: Bootstrap TCX Direct source
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - .bootstrap/ready
+  pull_request:
+    types: [opened, synchronize]
 
 permissions:
   contents: write
@@ -15,6 +13,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.head_ref }}
           fetch-depth: 0
 
       - name: Reconstruct and verify source archive
@@ -58,4 +57,4 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
           git commit -m "Publish Jandy TCX Direct v0.1.5 source"
-          git push
+          git push origin HEAD:${{ github.head_ref }}
