@@ -2,7 +2,7 @@ from __future__ import annotations
 
 DOMAIN = "tcx_direct"
 NAME = "Jandy TCX Direct"
-VERSION = "0.1.6"
+VERSION = "0.1.7"
 
 API_KEY = "EOOEMOW4YR6QNB07"
 ZODIAC_API = "https://prod.zodiac-io.com"

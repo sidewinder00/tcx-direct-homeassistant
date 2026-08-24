@@ -74,6 +74,7 @@ async def async_get_config_entry_diagnostics(
             "reconnect_count": client.websocket_reconnect_count,
             "watchdog_reconnect_count": client.watchdog_reconnect_count,
             "manual_reconnect_count": client.manual_reconnect_count,
+            "reconnect_reason_counts": dict(client.reconnect_reason_counts),
             "authorization_subscribe_count": client.authorization_subscribe_count,
             "authorization_snapshot_count": client.authorization_snapshot_count,
             "bootstrap_resubscribe_count": client.bootstrap_resubscribe_count,
