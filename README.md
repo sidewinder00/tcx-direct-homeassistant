@@ -85,8 +85,14 @@ Diagnostics include WebSocket message counts, recent payload structures, reconne
 
 ## Version history
 
-See [CHANGELOG.md](CHANGELOG.md) for the complete history from v0.1.0 onward.
+See [CHANGELOG.md](CHANGELOG.md) for the complete development history from v0.1.0 onward.
 
-## Protocol reference
+## Protocol notes
 
-The implementation was informed by public reverse-engineering work around the iAquaLink/Zodiac cloud protocol, particularly the `iaqualink` project by tekkamanendless. TCX Direct contains its own Home Assistant integration, connection supervision, telemetry mapping, persistence, and diagnostics.
+See [docs/PROTOCOL.md](docs/PROTOCOL.md) for the observed TCX namespaces, field mappings, startup behavior, and fields that are intentionally not decoded yet.
+
+The transport implementation was informed by public reverse-engineering work around the iAquaLink/Zodiac cloud protocol, particularly the [`iaqualink`](https://github.com/tekkamanendless/iaqualink) project by tekkamanendless. TCX Direct contains its own Home Assistant integration, connection supervision, telemetry mapping, persistence, and diagnostics.
+
+## Validation
+
+Every push and pull request runs a lightweight validation workflow that compiles the integration, validates its JSON files, and confirms the version in `const.py` matches `manifest.json`.
