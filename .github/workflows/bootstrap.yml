@@ -1,8 +1,10 @@
 name: Bootstrap TCX Direct source
 
 on:
-  pull_request:
-    types: [opened, synchronize]
+  push:
+    branches: [main]
+    paths:
+      - .bootstrap/ready
 
 permissions:
   contents: write
@@ -13,7 +15,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.head_ref }}
           fetch-depth: 0
 
       - name: Reconstruct and verify source archive
@@ -45,7 +46,7 @@ jobs:
       - name: Remove temporary bootstrap files
         shell: bash
         run: |
-          rm -rf .bootstrap .bootstrap2
+          rm -rf .bootstrap
           rm -f .github/workflows/bootstrap.yml
           rmdir .github/workflows 2>/dev/null || true
           rmdir .github 2>/dev/null || true
@@ -57,4 +58,4 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
           git commit -m "Publish Jandy TCX Direct v0.1.5 source"
-          git push origin HEAD:${{ github.head_ref }}
+          git push
