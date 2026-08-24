@@ -1,0 +1,92 @@
+# Jandy TCX Direct
+
+A Home Assistant custom integration for Jandy / Fluidra AquaLink TCX controllers.
+
+TCX Direct connects Home Assistant directly to the iAquaLink/Zodiac cloud. It does **not** require a Supervisor add-on, separate container, local HTTP bridge, or the legacy Jandy TCX Client add-on.
+
+> [!IMPORTANT]
+> This is an unofficial community integration built against reverse-engineered iAquaLink/TCX cloud behavior. It is not affiliated with or supported by Jandy or Fluidra.
+
+## Current version
+
+**v0.1.5**
+
+The current development focus is reliable read-only telemetry and connection recovery. Native equipment control is intentionally not enabled until the TCX write protocol is fully mapped and validated.
+
+## What it currently exposes
+
+- Pool temperature
+- Pool pump state
+- Pump RPM
+- Pump preset
+- Pool light state
+- Pool light color number
+- Pool light color name
+- Pool temperature setpoint
+- Pump minimum and maximum RPM
+- Wi-Fi RSSI
+- TCX firmware version
+- Connection type
+- Cloud, WebSocket transport, and WebSocket stream health
+- Connection/reconnect diagnostics
+- Last successful update, WebSocket update, and shadow update
+- Manual diagnostic reconnect button
+
+Equipment air temperature and salt-water chlorinator level remain disabled by default because the tested TCX controller has not exposed trustworthy native values for those fields.
+
+## Reliability design
+
+The integration is designed around the failure mode where an iAquaLink/TCX connection can remain technically open while state updates stop.
+
+- Direct iAquaLink/Zodiac authentication and TCX discovery
+- Persistent Zodiac WebSocket subscription
+- 30-second WebSocket heartbeat
+- Application-message watchdog rather than relying only on TCP/WebSocket-open state
+- Automatic reconnect with backoff
+- Automatic re-authentication and proactive token refresh
+- REST shadow fallback/watchdog when supported by the controller
+- Periodic WebSocket session rotation
+- Startup Authorization re-subscription/bootstrap
+- Last-known normalized-state persistence
+- Full merged reported-state persistence across Home Assistant restarts
+- Separate connectivity diagnostics from equipment values
+
+## Installation
+
+### Manual
+
+Copy:
+
+```text
+custom_components/tcx_direct
+```
+
+into:
+
+```text
+/config/custom_components/tcx_direct
+```
+
+Restart Home Assistant, then go to:
+
+**Settings → Devices & services → Add Integration → Jandy TCX Direct**
+
+Enter your normal iAquaLink email address and password.
+
+### HACS custom repository
+
+This repository includes `hacs.json` and can be added as a custom **Integration** repository in HACS.
+
+## Diagnostics
+
+Home Assistant's **Download diagnostics** output is deliberately detailed because the TCX protocol is still being mapped. Sensitive values such as credentials, tokens, controller identifiers, coordinates, MAC addresses, and session identifiers are redacted.
+
+Diagnostics include WebSocket message counts, recent payload structures, reconnect reasons, Authorization/bootstrap activity, shadow polling, authentication refreshes, and the sanitized merged state used by Home Assistant.
+
+## Version history
+
+See [CHANGELOG.md](CHANGELOG.md) for the complete history from v0.1.0 onward.
+
+## Protocol reference
+
+The implementation was informed by public reverse-engineering work around the iAquaLink/Zodiac cloud protocol, particularly the `iaqualink` project by tekkamanendless. TCX Direct contains its own Home Assistant integration, connection supervision, telemetry mapping, persistence, and diagnostics.
