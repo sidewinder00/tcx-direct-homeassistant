@@ -2,6 +2,14 @@
 
 All notable changes to Jandy TCX Direct are documented here.
 
+## [0.1.8] - 2026-08-24
+
+### Fixed
+- Use Home Assistant's `EntityCategory.DIAGNOSTIC` enum for all diagnostic sensors, binary sensors, and the reconnect button so Home Assistant 2026.8 accepts them during entity registration.
+
+### Changed
+- Add a regression check covering every TCX entity-category declaration.
+
 ## [0.1.7] - 2026-08-24
 
 ### Fixed

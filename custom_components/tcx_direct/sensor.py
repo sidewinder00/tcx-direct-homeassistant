@@ -4,7 +4,12 @@ from dataclasses import dataclass
 from typing import Any
 
 from homeassistant.components.sensor import SensorEntity, SensorEntityDescription
-from homeassistant.const import PERCENTAGE, SIGNAL_STRENGTH_DECIBELS_MILLIWATT, UnitOfTemperature
+from homeassistant.const import (
+    PERCENTAGE,
+    SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
+    EntityCategory,
+    UnitOfTemperature,
+)
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -39,7 +44,7 @@ SENSORS = (
         name="Pool Temperature Setpoint",
         native_unit_of_measurement=UnitOfTemperature.FAHRENHEIT,
         icon="mdi:thermometer-water",
-        entity_category="diagnostic",
+        entity_category=EntityCategory.DIAGNOSTIC,
     ),
     TCXSensorDescription(
         key="pump_rpm",
@@ -62,7 +67,7 @@ SENSORS = (
         native_unit_of_measurement="rpm",
         suggested_display_precision=0,
         icon="mdi:speedometer-slow",
-        entity_category="diagnostic",
+        entity_category=EntityCategory.DIAGNOSTIC,
     ),
     TCXSensorDescription(
         key="pump_max_rpm",
@@ -71,7 +76,7 @@ SENSORS = (
         native_unit_of_measurement="rpm",
         suggested_display_precision=0,
         icon="mdi:speedometer",
-        entity_category="diagnostic",
+        entity_category=EntityCategory.DIAGNOSTIC,
     ),
     TCXSensorDescription(
         key="swc_level",
@@ -99,63 +104,63 @@ SENSORS = (
         name="Wi-Fi Signal",
         native_unit_of_measurement=SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
         icon="mdi:wifi",
-        entity_category="diagnostic",
+        entity_category=EntityCategory.DIAGNOSTIC,
     ),
     TCXSensorDescription(
         key="firmware_version",
         data_key="firmware_version",
         name="Firmware Version",
         icon="mdi:chip",
-        entity_category="diagnostic",
+        entity_category=EntityCategory.DIAGNOSTIC,
     ),
     TCXSensorDescription(
         key="connection_type",
         data_key="connection_type",
         name="Connection Type",
         icon="mdi:access-point-network",
-        entity_category="diagnostic",
+        entity_category=EntityCategory.DIAGNOSTIC,
     ),
     TCXSensorDescription(
         key="last_successful_update",
         data_key="last_successful_update",
         name="Last Successful Update",
         icon="mdi:clock-check-outline",
-        entity_category="diagnostic",
+        entity_category=EntityCategory.DIAGNOSTIC,
     ),
     TCXSensorDescription(
         key="last_websocket_message",
         data_key="last_websocket_message",
         name="Last WebSocket Message",
         icon="mdi:message-badge-outline",
-        entity_category="diagnostic",
+        entity_category=EntityCategory.DIAGNOSTIC,
     ),
     TCXSensorDescription(
         key="last_shadow_update",
         data_key="last_shadow_update",
         name="Last Shadow Update",
         icon="mdi:cloud-refresh-outline",
-        entity_category="diagnostic",
+        entity_category=EntityCategory.DIAGNOSTIC,
     ),
     TCXSensorDescription(
         key="websocket_messages_received",
         data_key="websocket_messages_received",
         name="WebSocket Messages Received",
         icon="mdi:counter",
-        entity_category="diagnostic",
+        entity_category=EntityCategory.DIAGNOSTIC,
     ),
     TCXSensorDescription(
         key="websocket_reconnect_count",
         data_key="websocket_reconnect_count",
         name="WebSocket Reconnect Count",
         icon="mdi:connection",
-        entity_category="diagnostic",
+        entity_category=EntityCategory.DIAGNOSTIC,
     ),
     TCXSensorDescription(
         key="watchdog_reconnect_count",
         data_key="watchdog_reconnect_count",
         name="Watchdog Reconnect Count",
         icon="mdi:dog-service",
-        entity_category="diagnostic",
+        entity_category=EntityCategory.DIAGNOSTIC,
     ),
 )
 

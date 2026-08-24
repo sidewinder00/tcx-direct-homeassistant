@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from homeassistant.components.button import ButtonEntity, ButtonEntityDescription
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -21,7 +22,7 @@ class TCXReconnectButton(TCXEntity, ButtonEntity):
         key="reconnect",
         name="Reconnect",
         icon="mdi:connection",
-        entity_category="diagnostic",
+        entity_category=EntityCategory.DIAGNOSTIC,
     )
 
     def __init__(self, entry: TCXConfigEntry) -> None:

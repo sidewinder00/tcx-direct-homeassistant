@@ -9,7 +9,7 @@ TCX Direct connects Home Assistant directly to the iAquaLink/Zodiac cloud. It do
 
 ## Current version
 
-**v0.1.7**
+**v0.1.8**
 
 The current development focus is reliable read-only telemetry and connection recovery. Native equipment control is intentionally not enabled until the TCX write protocol is fully mapped and validated.
 
