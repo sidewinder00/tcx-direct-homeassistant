@@ -1,17 +1,21 @@
 from __future__ import annotations
 
-from copy import deepcopy
 from typing import Any
 
 from homeassistant.components.diagnostics import async_redact_data
 from homeassistant.core import HomeAssistant
 
 from . import TCXConfigEntry
+from .redaction import sanitize_diagnostics
 
 TO_REDACT = {
     "username",
     "password",
     "authentication_token",
+    "device_name",
+    "ei",
+    "equipmentId",
+    "euid",
     "id_token",
     "refresh_token",
     "device_id",
@@ -23,43 +27,9 @@ TO_REDACT = {
     "latitude",
     "longitude",
     "macAddr",
+    "ni",
     "session_id",
 }
-
-# Values under these keys can identify the physical controller or location.
-# Preserve the key/schema so diagnostics remain useful for protocol mapping.
-_EXTRA_SENSITIVE_NORMALIZED = {
-    "sn",
-    "serial",
-    "serialnumber",
-    "deviceid",
-    "target",
-    "latitude",
-    "longitude",
-    "macaddr",
-    "sessionid",
-    "clienttoken",
-    "userid",
-}
-
-
-def _norm_key(value: Any) -> str:
-    return "".join(ch for ch in str(value).casefold() if ch.isalnum())
-
-
-def _sanitize(value: Any) -> Any:
-    """Recursively redact identifiers/tokens while preserving JSON shape."""
-    if isinstance(value, dict):
-        output: dict[str, Any] = {}
-        for key, item in value.items():
-            if _norm_key(key) in _EXTRA_SENSITIVE_NORMALIZED:
-                output[str(key)] = "**REDACTED**"
-            else:
-                output[str(key)] = _sanitize(item)
-        return output
-    if isinstance(value, list):
-        return [_sanitize(item) for item in value]
-    return deepcopy(value)
 
 
 async def async_get_config_entry_diagnostics(
@@ -87,10 +57,12 @@ async def async_get_config_entry_diagnostics(
             "text_messages_received": client.ws_text_messages_received,
             "json_messages_received": client.ws_json_messages_received,
             "state_messages_received": client.ws_state_messages_received,
+            "desired_messages_received": client.ws_desired_messages_received,
             "reported_messages_received": client.ws_reported_messages_received,
             "non_state_messages_received": client.ws_non_state_messages_received,
             "last_message_at": client.last_ws_message_at,
             "last_state_message_at": client.last_ws_state_at,
+            "last_reported_state_at": client.last_ws_state_at,
             "last_message_type": client.last_ws_message_type,
             "last_service": client.last_ws_service,
             "last_event": client.last_ws_event,
@@ -108,8 +80,10 @@ async def async_get_config_entry_diagnostics(
             "last_authorization_snapshot_at": client.last_authorization_snapshot_at,
             "last_reconnect_reason": client.last_reconnect_reason,
             "recent_unique_payload_structures": client.recent_ws_structures,
-            "recent_desired_payloads": _sanitize(client.recent_desired_payloads),
-            "last_payload": _sanitize(client.last_ws_payload),
+            "recent_desired_payloads": sanitize_diagnostics(
+                client.recent_desired_payloads
+            ),
+            "last_payload": sanitize_diagnostics(client.last_ws_payload),
         },
         "shadow": {
             "last_update_at": client.last_shadow_update_at,
@@ -126,6 +100,6 @@ async def async_get_config_entry_diagnostics(
             "has_raw_reported_state": bool(coordinator.raw_reported),
         },
         "normalized": coordinator.normalized,
-        "reported_state": _sanitize(coordinator.raw_reported),
+        "reported_state": sanitize_diagnostics(coordinator.raw_reported),
     }
     return async_redact_data(diagnostics, TO_REDACT)

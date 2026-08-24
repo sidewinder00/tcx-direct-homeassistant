@@ -20,6 +20,15 @@ jobs:
         with:
           python-version: "3.14"
 
+      - name: Install validation dependencies
+        run: python -m pip install --disable-pip-version-check aiohttp pytest ruff
+
+      - name: Lint integration and tests
+        run: ruff check custom_components/tcx_direct tests
+
+      - name: Run unit tests
+        run: pytest -q
+
       - name: Compile integration
         run: python -m compileall -q custom_components/tcx_direct
 

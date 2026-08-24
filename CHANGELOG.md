@@ -2,6 +2,20 @@
 
 All notable changes to Jandy TCX Direct are documented here.
 
+## [0.1.6] - 2026-08-23
+
+### Fixed
+- Base WebSocket stream health and stale-subscription recovery on fresh `state.reported` traffic instead of desired-only heartbeat echoes.
+- Reset per-connection monotonic freshness state so a new socket receives its full watchdog window and cannot inherit health from the previous socket.
+- Mark cloud reachability false on authentication, connection, unexpected-close, and defensive supervisor failures.
+- Count every unsuccessful REST-shadow request in diagnostics.
+- Redact Zigbee EUI, equipment, network, and identifier-shaped diagnostic fields.
+
+### Changed
+- Deduplicate repeated desired-state payloads while retaining counts and first/last-seen timestamps.
+- Remove duplicated volatile connection attributes from every entity to reduce Home Assistant recorder churn; dedicated diagnostic entities remain available.
+- Add focused parser, connection-health, redaction, and diagnostics-buffer tests plus Ruff validation in CI.
+
 ## [0.1.5] - 2026-08-23
 
 ### Fixed
