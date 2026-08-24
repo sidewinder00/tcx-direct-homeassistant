@@ -6,12 +6,11 @@ import json
 import logging
 import random
 import time
-import uuid
 from collections import deque
-from datetime import datetime, timezone
 from collections.abc import Awaitable, Callable
 from copy import deepcopy
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 
 import aiohttp
@@ -30,6 +29,7 @@ from .const import (
     WEBSOCKET_URL,
     ZODIAC_API,
 )
+from .redaction import safe_structure_key
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -227,7 +227,7 @@ def _structure_paths(data: Any, prefix: tuple[str, ...] = ()) -> list[str]:
         if not data:
             paths.append(".".join(prefix) + ".{}" if prefix else "{}")
         for key, value in data.items():
-            paths.extend(_structure_paths(value, (*prefix, str(key))))
+            paths.extend(_structure_paths(value, (*prefix, safe_structure_key(key))))
     elif isinstance(data, list):
         if not data:
             paths.append(".".join((*prefix, "[]")))
@@ -457,8 +457,7 @@ class TCXClient:
         self.websocket_connected = False
         self.cloud_reachable = False
         self.last_error: str | None = None
-        self.last_ws_message_monotonic: float | None = None
-        self.last_live_monotonic: float | None = None
+        self.last_ws_reported_monotonic: float | None = None
         self.last_ws_device_timestamp: int | None = None
         self.shadow_supported: bool | None = None
         self._ws_opened_monotonic: float | None = None
@@ -470,6 +469,7 @@ class TCXClient:
         self.ws_text_messages_received = 0
         self.ws_json_messages_received = 0
         self.ws_state_messages_received = 0
+        self.ws_desired_messages_received = 0
         self.ws_reported_messages_received = 0
         self.ws_non_state_messages_received = 0
         self.websocket_connect_count = 0
@@ -539,14 +539,13 @@ class TCXClient:
                 if response.status in (401, 403):
                     raise TCXAuthError("Invalid iAquaLink username or password")
                 if response.status >= 400:
-                    text = await response.text()
                     raise TCXConnectionError(
-                        f"Login failed with HTTP {response.status}: {text[:120]}"
+                        f"Login failed with HTTP {response.status}"
                     )
                 data = await response.json(content_type=None)
         except TCXError:
             raise
-        except (aiohttp.ClientError, asyncio.TimeoutError) as err:
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as err:
             raise TCXConnectionError(f"Unable to reach iAquaLink login: {err}") from err
 
         self._apply_auth(data, keep_refresh=False)
@@ -631,7 +630,7 @@ class TCXClient:
                 data = await response.json(content_type=None)
         except TCXError:
             raise
-        except (aiohttp.ClientError, asyncio.TimeoutError) as err:
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as err:
             raise TCXConnectionError(f"Device discovery failed: {err}") from err
 
         devices: list[TCXDevice] = []
@@ -655,6 +654,15 @@ class TCXClient:
         return devices
 
     async def async_get_shadow(self) -> dict[str, Any]:
+        """Read the TCX shadow and account for every failed attempt."""
+        self.shadow_request_count += 1
+        try:
+            return await self._async_get_shadow()
+        except Exception:
+            self.shadow_failure_count += 1
+            raise
+
+    async def _async_get_shadow(self) -> dict[str, Any]:
         """Read the TCX Zodiac shadow when that endpoint is available.
 
         TCX deployments are inconsistent here. The v1 endpoint is the one
@@ -667,7 +675,6 @@ class TCXClient:
         if self.shadow_supported is False:
             raise TCXShadowUnsupported("TCX REST shadow is not supported")
 
-        self.shadow_request_count += 1
         await self.async_ensure_auth()
         assert self.id_token is not None
         headers = {
@@ -688,22 +695,16 @@ class TCXClient:
                         self.id_token = None
                         raise TCXAuthError("iAquaLink authorization expired")
                     if response.status in (400, 404, 405):
-                        body = (await response.text())[:160].replace("\n", " ")
-                        unsupported.append(
-                            f"{version} HTTP {response.status}"
-                            + (f" ({body})" if body else "")
-                        )
+                        unsupported.append(f"{version} HTTP {response.status}")
                         continue
                     if response.status >= 400:
-                        body = (await response.text())[:160].replace("\n", " ")
                         raise TCXConnectionError(
                             f"TCX shadow {version} returned HTTP {response.status}"
-                            + (f": {body}" if body else "")
                         )
                     data = await response.json(content_type=None)
             except TCXError:
                 raise
-            except (aiohttp.ClientError, asyncio.TimeoutError) as err:
+            except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as err:
                 raise TCXConnectionError(f"Unable to read TCX shadow: {err}") from err
 
             reported = _collect_reported(data)
@@ -714,14 +715,12 @@ class TCXClient:
             self.shadow_supported = True
             self.cloud_reachable = True
             self.last_error = None
-            self.last_live_monotonic = time.monotonic()
             self.last_shadow_update_at = _utc_now_iso()
             self.shadow_success_count += 1
             _deep_merge(self.reported, reported)
             return data
 
         self.shadow_supported = False
-        self.shadow_failure_count += 1
         detail = "; ".join(unsupported) if unsupported else "unsupported response"
         raise TCXShadowUnsupported(f"TCX REST shadow unavailable: {detail}")
 
@@ -775,6 +774,45 @@ class TCXClient:
         structure["last_seen"] = self.last_ws_message_at
         self._recent_ws_structures.append(structure)
 
+    def _record_desired_payload(
+        self,
+        data: dict[str, Any],
+        payload: dict[str, Any],
+        desired: dict[str, Any],
+    ) -> None:
+        """Retain unique desired-state echoes without crowding out rare events."""
+        signature_source = json.dumps(
+            {
+                "service": data.get("service"),
+                "event": data.get("event"),
+                "desired": desired,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        ).encode("utf-8", errors="replace")
+        fingerprint = hashlib.sha256(signature_source).hexdigest()[:16]
+
+        for existing in self._recent_desired_payloads:
+            if existing.get("fingerprint") == fingerprint:
+                existing["count"] = int(existing.get("count", 1)) + 1
+                existing["last_seen"] = self.last_ws_message_at
+                existing["timestamp"] = payload.get("timestamp")
+                return
+
+        self._recent_desired_payloads.append(
+            {
+                "fingerprint": fingerprint,
+                "count": 1,
+                "first_seen": self.last_ws_message_at,
+                "last_seen": self.last_ws_message_at,
+                "service": data.get("service"),
+                "event": data.get("event"),
+                "timestamp": payload.get("timestamp"),
+                "desired": deepcopy(desired),
+            }
+        )
+
     @property
     def recent_ws_structures(self) -> list[dict[str, Any]]:
         return [deepcopy(item) for item in self._recent_ws_structures]
@@ -786,13 +824,25 @@ class TCXClient:
 
     @property
     def websocket_stream_healthy(self) -> bool:
-        """Return whether actual WebSocket application traffic is recent."""
-        if not self.websocket_connected or self.last_ws_message_monotonic is None:
+        """Return whether actual WebSocket reported-state traffic is recent."""
+        if not self.websocket_connected or self.last_ws_reported_monotonic is None:
             return False
         return (
-            time.monotonic() - self.last_ws_message_monotonic
+            time.monotonic() - self.last_ws_reported_monotonic
             <= WEBSOCKET_STALE_SECONDS
         )
+
+    def _mark_websocket_opened(self) -> None:
+        """Initialize freshness state for a newly opened socket generation."""
+        self.websocket_connected = True
+        self._ws_opened_monotonic = time.monotonic()
+        self.last_ws_reported_monotonic = None
+        self.last_websocket_opened_at = _utc_now_iso()
+
+    def _record_connection_failure(self, err: Exception | str) -> None:
+        """Record a cloud transport failure consistently."""
+        self.last_error = str(err)
+        self.cloud_reachable = False
 
     async def _notify_status(self) -> None:
         if self._status_callback is not None:
@@ -899,12 +949,9 @@ class TCXClient:
                 self.websocket_connect_count += 1
                 if reconnecting:
                     self.websocket_reconnect_count += 1
-                self.websocket_connected = True
-                self._ws_opened_monotonic = time.monotonic()
-                self.last_websocket_opened_at = _utc_now_iso()
+                self._mark_websocket_opened()
                 self.cloud_reachable = True
                 self.last_error = None
-                failures = 0
                 await self._notify_status()
                 bootstrap_task = asyncio.create_task(
                     self._bootstrap_resubscribe(self._ws),
@@ -921,13 +968,11 @@ class TCXClient:
                     if msg.type == aiohttp.WSMsgType.TEXT:
                         now = time.monotonic()
                         self.ws_text_messages_received += 1
-                        self.last_ws_message_monotonic = now
                         self.last_ws_message_at = _utc_now_iso()
                         try:
                             data = json.loads(msg.data)
                         except json.JSONDecodeError:
                             _LOGGER.debug("Ignoring non-JSON TCX WebSocket frame")
-                            await self._notify_status()
                             continue
 
                         self.ws_json_messages_received += 1
@@ -961,15 +1006,8 @@ class TCXClient:
                             if isinstance(desired, dict) and any(
                                 value is not None for value in desired.values()
                             ):
-                                self._recent_desired_payloads.append(
-                                    {
-                                        "at": self.last_ws_message_at,
-                                        "service": data.get("service") if isinstance(data, dict) else None,
-                                        "event": data.get("event") if isinstance(data, dict) else None,
-                                        "timestamp": payload.get("timestamp") if isinstance(payload, dict) else None,
-                                        "desired": deepcopy(desired),
-                                    }
-                                )
+                                self.ws_desired_messages_received += 1
+                                self._record_desired_payload(data, payload, desired)
 
                         if (
                             isinstance(data, dict)
@@ -983,19 +1021,19 @@ class TCXClient:
                         is_state_message = reported is not None or payload_state is not None
                         if is_state_message:
                             self.ws_state_messages_received += 1
-                            self.last_ws_state_at = self.last_ws_message_at
                         else:
                             self.ws_non_state_messages_received += 1
 
                         if reported is not None:
                             self.ws_reported_messages_received += 1
                             _deep_merge(self.reported, reported)
-                            self.last_live_monotonic = now
+                            self.last_ws_reported_monotonic = now
+                            self.last_ws_state_at = self.last_ws_message_at
+                            failures = 0
                             stamp = _extract_device_timestamp(data)
                             if stamp is not None:
                                 self.last_ws_device_timestamp = stamp
                             await self._notify_state("websocket")
-                        await self._notify_status()
                     elif msg.type in (
                         aiohttp.WSMsgType.CLOSED,
                         aiohttp.WSMsgType.CLOSE,
@@ -1003,18 +1041,22 @@ class TCXClient:
                     ):
                         break
                     else:
-                        await self._notify_status()
+                        continue
+
+                if not self._stopping and not self._reconnect_requested.is_set():
+                    failures += 1
+                    self._record_connection_failure("TCX WebSocket closed unexpectedly")
             except TCXAuthError as err:
-                self.last_error = str(err)
+                self._record_connection_failure(err)
                 self.id_token = None
                 failures += 1
             except (TCXConnectionError, aiohttp.ClientError, asyncio.TimeoutError) as err:
-                self.last_error = str(err)
+                self._record_connection_failure(err)
                 failures += 1
             except asyncio.CancelledError:
                 raise
             except Exception as err:  # defensive supervisor: never die silently
-                self.last_error = f"Unexpected WebSocket error: {err}"
+                self._record_connection_failure(f"Unexpected WebSocket error: {err}")
                 _LOGGER.exception("Unexpected TCX WebSocket failure")
                 failures += 1
             finally:
@@ -1054,7 +1096,6 @@ class TCXClient:
                 data = await self.async_get_shadow()
                 shadow_stamp = _extract_device_timestamp(data)
                 await self._notify_state("shadow")
-                await self._notify_status()
 
                 # If REST has clearly newer device state than the socket has seen,
                 # the socket is logically stale even if TCP ping/pong still works.
@@ -1063,8 +1104,9 @@ class TCXClient:
                     and shadow_stamp is not None
                     and self.last_ws_device_timestamp is not None
                     and shadow_stamp > self.last_ws_device_timestamp
-                    and self.last_ws_message_monotonic is not None
-                    and time.monotonic() - self.last_ws_message_monotonic > SHADOW_INTERVAL * 2
+                    and self.last_ws_reported_monotonic is not None
+                    and time.monotonic() - self.last_ws_reported_monotonic
+                    > SHADOW_INTERVAL * 2
                 ):
                     _LOGGER.warning(
                         "TCX WebSocket appears stale while shadow is current; reconnecting"
@@ -1121,23 +1163,27 @@ class TCXClient:
 
             now = time.monotonic()
             age = now - self._ws_opened_monotonic
-            message_age = (
+            reported_age = (
                 None
-                if self.last_ws_message_monotonic is None
-                else now - self.last_ws_message_monotonic
+                if self.last_ws_reported_monotonic is None
+                else now - self.last_ws_reported_monotonic
             )
 
-            # A TCP/WebSocket connection is not enough. If no application
+            # A TCP/WebSocket connection is not enough. If no reported-state
             # message has been received for the stale window, rebuild the
             # subscription. This is the failure mode the original TCX client
-            # could sit in indefinitely.
+            # could sit in indefinitely. Desired-only heartbeat echoes do not
+            # count as live equipment telemetry.
             if (
-                (message_age is None and age >= WEBSOCKET_STALE_SECONDS)
-                or (message_age is not None and message_age >= WEBSOCKET_STALE_SECONDS)
+                (reported_age is None and age >= WEBSOCKET_STALE_SECONDS)
+                or (
+                    reported_age is not None
+                    and reported_age >= WEBSOCKET_STALE_SECONDS
+                )
             ):
                 _LOGGER.warning(
-                    "TCX WebSocket has produced no application data for %s seconds; reconnecting",
-                    f"{age:.0f}" if message_age is None else f"{message_age:.0f}",
+                    "TCX WebSocket has produced no reported state for %s seconds; reconnecting",
+                    f"{age:.0f}" if reported_age is None else f"{reported_age:.0f}",
                 )
                 await self.async_force_reconnect("watchdog_stale_stream")
                 continue
@@ -1148,7 +1194,6 @@ class TCXClient:
                     age,
                 )
                 await self.async_force_reconnect("watchdog_session_rotation")
-
 
     @property
     def healthy(self) -> bool:

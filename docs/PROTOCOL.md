@@ -130,13 +130,15 @@ The tested controller has not yet exposed a clearly identified native SWG/chlori
 
 ## Reliability behavior
 
-The socket being TCP/WebSocket-open is not considered sufficient proof that live TCX state is healthy. TCX Direct tracks actual application messages and can rebuild the subscription when:
+The socket being TCP/WebSocket-open is not considered sufficient proof that live TCX state is healthy. TCX Direct tracks actual `state.reported` messages and can rebuild the subscription when:
 
-- application traffic goes stale,
+- reported-state traffic goes stale,
 - REST shadow state is demonstrably newer than WebSocket state, or
 - the configured maximum WebSocket session age is reached.
 
 Authentication refresh, reconnect backoff, state caching, and startup re-subscription are all handled inside the Home Assistant integration; no Supervisor add-on or local bridge is required.
+
+Desired-only messages such as the recurring `freezeSP` echo do not count as fresh equipment telemetry. They are deduplicated in diagnostics so rare desired-state structures are not displaced by heartbeat-like repeats.
 
 ## External reference
 
