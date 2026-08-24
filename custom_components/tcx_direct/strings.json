@@ -1,0 +1,41 @@
+{
+  "title": "Jandy TCX Direct",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to iAquaLink",
+        "description": "This integration connects directly to the Zodiac/iAquaLink cloud. No Home Assistant add-on is required.",
+        "data": {
+          "username": "iAquaLink email",
+          "password": "iAquaLink password"
+        }
+      },
+      "device": {
+        "title": "Select AquaLink TCX",
+        "description": "More than one TCX controller was found.",
+        "data": {
+          "device_id": "TCX controller"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Reconnect iAquaLink account",
+        "description": "Enter your current iAquaLink credentials.",
+        "data": {
+          "username": "iAquaLink email",
+          "password": "iAquaLink password"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Unable to connect to iAquaLink.",
+      "invalid_auth": "Invalid iAquaLink username or password.",
+      "no_tcx_devices": "The account connected successfully, but no AquaLink TCX device was found.",
+      "device_not_found": "The configured TCX controller was not found on this account.",
+      "unknown": "Unexpected error. Check the Home Assistant log."
+    },
+    "abort": {
+      "already_configured": "This AquaLink TCX is already configured.",
+      "reauth_successful": "iAquaLink authentication was updated successfully."
+    }
+  }
+}
