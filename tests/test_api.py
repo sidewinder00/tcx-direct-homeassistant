@@ -42,7 +42,7 @@ def test_normalize_observed_tcx_state() -> None:
             "maxSpd": 3450,
             "spdList": [{"name": "Pool Filtration", "speed": 1100}],
         },
-        "auxz0": {"st": 0, "currClr": 3},
+        "auxz0": {"st": 1, "currClr": 3},
         "fcr0": {"fr": "Waterfall", "app": "WF", "st": 0},
     }
 
@@ -54,9 +54,27 @@ def test_normalize_observed_tcx_state() -> None:
     assert normalized["pump"] is True
     assert normalized["pump_rpm"] == 2600
     assert normalized["pump_preset"] == "Manual"
-    assert normalized["light"] is False
+    assert normalized["light"] is True
+    assert normalized["light_color"] == 3
     assert normalized["light_color_name"] == "Romance"
     assert normalized["swc_level"] is None
+
+
+def test_light_color_clears_when_light_is_off() -> None:
+    normalized = api.normalize_tcx_state(
+        {
+            "auxz0": {
+                "st": 0,
+                "currClr": 0,
+                "cmdClr": 3,
+                "svdClr": 3,
+            }
+        }
+    )
+
+    assert normalized["light"] is False
+    assert normalized["light_color"] is None
+    assert normalized["light_color_name"] is None
 
 
 def test_new_socket_does_not_inherit_previous_freshness(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -115,3 +133,46 @@ def test_connection_failure_clears_cloud_reachability() -> None:
 
     assert client.cloud_reachable is False
     assert client.last_error == "socket closed"
+
+
+def test_reconnect_reasons_are_counted() -> None:
+    client = make_client()
+
+    asyncio.run(client.async_force_reconnect("watchdog_stale_stream"))
+    asyncio.run(client.async_force_reconnect("watchdog_session_rotation"))
+
+    assert client.watchdog_reconnect_count == 2
+    assert client.reconnect_reason_counts == {
+        "watchdog_stale_stream": 1,
+        "watchdog_session_rotation": 1,
+    }
+
+
+def test_shadow_poll_does_not_force_websocket_reconnect(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = make_client()
+    client.shadow_supported = True
+    client.websocket_connected = True
+    client.last_ws_device_timestamp = 100
+    client.last_ws_reported_monotonic = 0
+    reconnect_reasons: list[str] = []
+
+    async def get_shadow() -> dict[str, object]:
+        return {"timestamp": 200}
+
+    async def force_reconnect(reason: str) -> None:
+        reconnect_reasons.append(reason)
+
+    async def sleep(delay: float) -> None:
+        if delay == api.SHADOW_INTERVAL:
+            client._stopping = True
+
+    monkeypatch.setattr(client, "async_get_shadow", get_shadow)
+    monkeypatch.setattr(client, "async_force_reconnect", force_reconnect)
+    monkeypatch.setattr(api.asyncio, "sleep", sleep)
+    monkeypatch.setattr(api.time, "monotonic", lambda: 1_000)
+
+    asyncio.run(client._shadow_loop())
+
+    assert reconnect_reasons == []

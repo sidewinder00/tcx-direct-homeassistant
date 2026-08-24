@@ -133,8 +133,9 @@ The tested controller has not yet exposed a clearly identified native SWG/chlori
 The socket being TCP/WebSocket-open is not considered sufficient proof that live TCX state is healthy. TCX Direct tracks actual `state.reported` messages and can rebuild the subscription when:
 
 - reported-state traffic goes stale,
-- REST shadow state is demonstrably newer than WebSocket state, or
 - the configured maximum WebSocket session age is reached.
+
+REST shadow polling updates cached state but does not independently rotate the WebSocket. The shadow document timestamp can advance without an underlying equipment-state change, so reconnect decisions remain centralized in the reported-state watchdog.
 
 Authentication refresh, reconnect backoff, state caching, and startup re-subscription are all handled inside the Home Assistant integration; no Supervisor add-on or local bridge is required.
 

@@ -9,7 +9,7 @@ TCX Direct connects Home Assistant directly to the iAquaLink/Zodiac cloud. It do
 
 ## Current version
 
-**v0.1.6**
+**v0.1.7**
 
 The current development focus is reliable read-only telemetry and connection recovery. Native equipment control is intentionally not enabled until the TCX write protocol is fully mapped and validated.
 
@@ -81,7 +81,7 @@ This repository includes `hacs.json` and can be added as a custom **Integration*
 
 Home Assistant's **Download diagnostics** output is deliberately detailed because the TCX protocol is still being mapped. Sensitive values such as credentials, tokens, controller identifiers, coordinates, MAC addresses, and session identifiers are redacted.
 
-Diagnostics include WebSocket message counts, recent payload structures, reconnect reasons, Authorization/bootstrap activity, shadow polling, authentication refreshes, and the sanitized merged state used by Home Assistant.
+Diagnostics include WebSocket message counts, recent payload structures, reconnect-reason counts, Authorization/bootstrap activity, shadow polling, authentication refreshes, and the sanitized merged state used by Home Assistant.
 
 Recurring identical desired-state echoes are deduplicated so unusual protocol events remain visible. Hardware and network identifiers—including Zigbee identifiers—are redacted before diagnostics are exported.
 

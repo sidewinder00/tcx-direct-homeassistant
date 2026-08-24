@@ -375,6 +375,12 @@ def normalize_tcx_state(reported: dict[str, Any]) -> dict[str, Any]:
     light_color_raw = _coerce_number(auxz0.get("currClr"))
     light_color = int(light_color_raw) if light_color_raw is not None else None
 
+    # currClr falls back to 0 while this controller's light is off, while
+    # cmdClr/svdClr may retain the previous selection. Do not expose a stale or
+    # contradictory current color for equipment that is explicitly off.
+    if light_state is False:
+        light_color = None
+
     # AquaLink's P-Series/IntelliBrite emulation sequence. This controller's
     # captured state confirms currClr=3 is reported by the legacy client as
     # Romance.
@@ -476,6 +482,7 @@ class TCXClient:
         self.websocket_reconnect_count = 0
         self.watchdog_reconnect_count = 0
         self.manual_reconnect_count = 0
+        self.reconnect_reason_counts: dict[str, int] = {}
         self.authorization_subscribe_count = 0
         self.authorization_snapshot_count = 0
         self.bootstrap_resubscribe_count = 0
@@ -749,6 +756,9 @@ class TCXClient:
     async def async_force_reconnect(self, reason: str = "manual") -> None:
         """Force the current subscription to be rebuilt and record why."""
         self.last_reconnect_reason = reason
+        self.reconnect_reason_counts[reason] = (
+            self.reconnect_reason_counts.get(reason, 0) + 1
+        )
         if reason == "manual":
             self.manual_reconnect_count += 1
         elif reason.startswith("watchdog"):
@@ -1093,25 +1103,8 @@ class TCXClient:
                     raise
                 continue
             try:
-                data = await self.async_get_shadow()
-                shadow_stamp = _extract_device_timestamp(data)
+                await self.async_get_shadow()
                 await self._notify_state("shadow")
-
-                # If REST has clearly newer device state than the socket has seen,
-                # the socket is logically stale even if TCP ping/pong still works.
-                if (
-                    self.websocket_connected
-                    and shadow_stamp is not None
-                    and self.last_ws_device_timestamp is not None
-                    and shadow_stamp > self.last_ws_device_timestamp
-                    and self.last_ws_reported_monotonic is not None
-                    and time.monotonic() - self.last_ws_reported_monotonic
-                    > SHADOW_INTERVAL * 2
-                ):
-                    _LOGGER.warning(
-                        "TCX WebSocket appears stale while shadow is current; reconnecting"
-                    )
-                    await self.async_force_reconnect("watchdog_shadow_newer")
             except TCXShadowUnsupported as err:
                 # Some TCX controllers are WebSocket-only. Do not mark the
                 # integration failed and do not keep hammering an unsupported

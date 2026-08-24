@@ -58,6 +58,11 @@ class TCXCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         for key, value in parsed.items():
             if value is not None:
                 self.normalized[key] = value
+        if parsed.get("light") is False:
+            # The controller retains saved/commanded colors while off. Remove
+            # both derived current-color values instead of keeping stale state.
+            self.normalized.pop("light_color", None)
+            self.normalized.pop("light_color_name", None)
         self.last_successful_update = datetime.now(timezone.utc).isoformat()
         self.source = source
         self.using_cached_data = False

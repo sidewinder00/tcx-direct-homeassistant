@@ -2,6 +2,15 @@
 
 All notable changes to Jandy TCX Direct are documented here.
 
+## [0.1.7] - 2026-08-24
+
+### Fixed
+- Stop treating the REST shadow document timestamp as proof of a stale WebSocket, eliminating the roughly three-minute reconnect loop observed in v0.1.6 diagnostics.
+- Clear both pool-light color values whenever the light is explicitly off instead of retaining a stale color name.
+
+### Changed
+- Centralize automatic reconnect decisions in the reported-state/session watchdog and expose per-reason reconnect counts in diagnostics.
+
 ## [0.1.6] - 2026-08-23
 
 ### Fixed
