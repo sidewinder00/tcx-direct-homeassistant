@@ -1,0 +1,53 @@
+name: Validate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Compile integration
+        run: python -m compileall -q custom_components/tcx_direct
+
+      - name: Validate JSON files
+        run: |
+          python -m json.tool hacs.json >/dev/null
+          python -m json.tool custom_components/tcx_direct/manifest.json >/dev/null
+          python -m json.tool custom_components/tcx_direct/strings.json >/dev/null
+          python -m json.tool custom_components/tcx_direct/translations/en.json >/dev/null
+
+      - name: Verify version consistency
+        run: |
+          python - <<'PY'
+          import ast
+          import json
+          from pathlib import Path
+
+          manifest = json.loads(Path("custom_components/tcx_direct/manifest.json").read_text())
+          tree = ast.parse(Path("custom_components/tcx_direct/const.py").read_text())
+          const_version = None
+          for node in tree.body:
+              if isinstance(node, ast.Assign):
+                  for target in node.targets:
+                      if isinstance(target, ast.Name) and target.id == "VERSION":
+                          const_version = ast.literal_eval(node.value)
+          if const_version != manifest.get("version"):
+              raise SystemExit(
+                  f"Version mismatch: const.py={const_version!r}, manifest={manifest.get('version')!r}"
+              )
+          print(f"TCX Direct version {const_version} is consistent")
+          PY
