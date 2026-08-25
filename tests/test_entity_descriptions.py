@@ -36,6 +36,7 @@ def test_status_points_and_writable_controls_remain_separate() -> None:
     number = Path("custom_components/tcx_direct/number.py").read_text()
 
     assert 'key="pump"' in binary_sensor
+    assert 'key="light"' in binary_sensor
     assert 'key="waterfall_status"' in binary_sensor
     assert "TCXPumpPowerSwitch" in switch
     assert "TCXPoolLightSwitch" in switch
