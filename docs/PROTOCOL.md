@@ -53,13 +53,9 @@ target and writes `manSpd`. The requested value is restricted to the reported
 `manSpd` is reported back. Subsequent live testing confirmed that a 2000 RPM
 manual write was applied by the controller.
 
-Starting in v0.1.14, the writable Pump Speed entity displays the active
-`ecm0.cmdSpd` whenever that value is inside the controller's reported limits.
-This keeps the control synchronized when the motor command changes through
-another client or during priming. When a stopped motor reports `cmdSpd = 0`,
-the entity falls back to the stored manual speed so its value remains inside
-the writable range. The existing bounded `filt0.manSpd` write and confirmation
-path is unchanged pending a captured official-client manual-speed command.
+v0.1.14 temporarily made the writable Pump Speed entity display the active
+`ecm0.cmdSpd` whenever that value was inside the controller's reported limits,
+while leaving the bounded `filt0.manSpd` write and confirmation path unchanged.
 
 Live testing showed that `cmdSpd` can progress through priming, filtration,
 and another controller-selected speed without a new manual command. v0.1.15
