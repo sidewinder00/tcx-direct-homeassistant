@@ -98,6 +98,7 @@ async def async_get_config_entry_diagnostics(
             "failure_count": client.control_failure_count,
             "last_command_at": client.last_control_at,
             "last_error": client.last_control_error,
+            "last_frame": client.last_control_frame,
         },
         "authentication": {
             "full_login_count": client.full_login_count,

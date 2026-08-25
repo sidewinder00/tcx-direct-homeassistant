@@ -2,6 +2,14 @@
 
 All notable changes to Jandy TCX Direct are documented here.
 
+## [0.1.10] - 2026-08-25
+
+### Fixed
+- Send Waterfall `StateController` commands through the `tcx` device namespace instead of the Authorization snapshot's `fea` document grouping, which Zodiac silently ignored in the v0.1.9 live test.
+
+### Added
+- Include the sanitized last-sent control frame in diagnostics so command shape, namespace, and desired values can be verified without exposing the controller identifier or client token.
+
 ## [0.1.9] - 2026-08-25
 
 ### Added

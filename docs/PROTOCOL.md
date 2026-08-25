@@ -134,9 +134,12 @@ index `ar: 3` matches the configured Waterfall pump speed of 2850 RPM on the
 tested system.
 
 TCX Direct sends this desired state through the Zodiac WebSocket `setState`
-action in the `fea` namespace. A control call is successful only after the
-matching `fcr0.st` value is received in reported state. The object key is
-discovered from the `FRLY`/`WF` type pair rather than assumed to be `fcr0`.
+action in the `tcx` device namespace. The Authorization snapshot's `fea`
+member is only a state-document grouping; using it as the write namespace was
+silently ignored by Zodiac during the v0.1.9 live test. A control call is
+successful only after the matching `fcr0.st` value is received in reported
+state. The object key is discovered from the `FRLY`/`WF` type pair rather than
+assumed to be `fcr0`.
 
 ## Device/configuration fields
 
