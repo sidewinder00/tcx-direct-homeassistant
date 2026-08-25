@@ -89,8 +89,54 @@ def test_pump_priming_reports_commanded_rpm_and_requested_preset() -> None:
 
     assert normalized["pump"] is True
     assert normalized["pump_rpm"] == 2500
-    assert normalized["pump_speed_setpoint"] == 2850
+    assert normalized["pump_speed_setpoint"] == 2500
     assert normalized["pump_preset"] == "Waterfall"
+
+
+def test_pump_speed_control_value_tracks_commanded_speed() -> None:
+    normalized = api.normalize_tcx_state(
+        {
+            "ecm0": {
+                "st": 1,
+                "cmdSpd": 2650,
+                "reqSpd": 2650,
+                "manSpd": 2650,
+                "minSpd": 600,
+                "maxSpd": 3450,
+            },
+            "filt0": {
+                "et": "F_CTRL",
+                "app": "FILT",
+                "manSpd": 1100,
+            },
+        }
+    )
+
+    assert normalized["pump_rpm"] == 2650
+    assert normalized["pump_speed_setpoint"] == 2650
+
+
+def test_stopped_pump_speed_control_value_stays_within_writable_range() -> None:
+    normalized = api.normalize_tcx_state(
+        {
+            "ecm0": {
+                "st": 0,
+                "cmdSpd": 0,
+                "reqSpd": 0,
+                "manSpd": 1100,
+                "minSpd": 600,
+                "maxSpd": 3450,
+            },
+            "filt0": {
+                "et": "F_CTRL",
+                "app": "FILT",
+                "manSpd": 1100,
+            },
+        }
+    )
+
+    assert normalized["pump_rpm"] == 0
+    assert normalized["pump_speed_setpoint"] == 1100
 
 
 def test_light_color_clears_when_light_is_off() -> None:

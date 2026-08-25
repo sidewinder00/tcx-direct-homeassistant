@@ -470,9 +470,18 @@ def normalize_tcx_state(reported: dict[str, Any]) -> dict[str, Any]:
     if requested_rpm is None:
         requested_rpm = _coerce_number(filt0.get("manSpd"))
 
-    pump_speed_setpoint = _coerce_number(filt0.get("manSpd"))
-    if pump_speed_setpoint is None:
+    # Keep the writable number synchronized with the motor's active command,
+    # just like the Pump RPM sensor. A stopped motor reports cmdSpd=0, which is
+    # outside the writable range, so retain the stored manual speed while off.
+    pump_speed_setpoint = _coerce_number(ecm0.get("cmdSpd"))
+    if (
+        pump_speed_setpoint is None
+        or (min_rpm is not None and pump_speed_setpoint < min_rpm)
+        or (max_rpm is not None and pump_speed_setpoint > max_rpm)
+    ):
         pump_speed_setpoint = _coerce_number(ecm0.get("manSpd"))
+    if pump_speed_setpoint is None:
+        pump_speed_setpoint = _coerce_number(filt0.get("manSpd"))
     if pump_speed_setpoint is None:
         pump_speed_setpoint = requested_rpm
     pool_mode = _find_pool_mode(reported)

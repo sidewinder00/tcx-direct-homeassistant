@@ -9,7 +9,7 @@ TCX Direct connects Home Assistant directly to the iAquaLink/Zodiac cloud. It do
 
 ## Current version
 
-**v0.1.13**
+**v0.1.14**
 
 The integration prioritizes reliable telemetry and conservative equipment control. Native control is enabled only for TCX equipment whose state and write behavior have been captured and validated; other equipment remains read-only.
 
@@ -36,7 +36,7 @@ The integration prioritizes reliable telemetry and conservative equipment contro
 Controls are exposed separately from the read-only sensor points:
 
 - Pump Power on/off
-- Pump Speed setpoint, constrained to the controller's reported limits
+- Pump Speed control that follows active `cmdSpd` and is constrained to the controller's reported limits
 - Pool Light Power on/off
 - Waterfall on/off
 
