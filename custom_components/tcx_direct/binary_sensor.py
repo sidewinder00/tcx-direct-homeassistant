@@ -34,6 +34,12 @@ BINARY_SENSORS = (
         icon="mdi:lightbulb",
     ),
     TCXBinaryDescription(
+        key="waterfall_status",
+        data_key="waterfall",
+        name="Waterfall Status",
+        icon="mdi:fountain",
+    ),
+    TCXBinaryDescription(
         key="connection",
         data_key="connected",
         name="Connection",

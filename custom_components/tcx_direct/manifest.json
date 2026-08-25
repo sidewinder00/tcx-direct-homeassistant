@@ -1,7 +1,7 @@
 {
   "domain": "tcx_direct",
   "name": "Jandy TCX Direct",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "config_flow": true,
   "documentation": "https://github.com/sidewinder00/tcx-direct-homeassistant",
   "issue_tracker": "https://github.com/sidewinder00/tcx-direct-homeassistant/issues",

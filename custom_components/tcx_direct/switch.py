@@ -15,7 +15,44 @@ async def async_setup_entry(
     entry: TCXConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    async_add_entities([TCXWaterfallSwitch(entry)])
+    async_add_entities([TCXPumpPowerSwitch(entry), TCXWaterfallSwitch(entry)])
+
+
+class TCXPumpPowerSwitch(TCXEntity, SwitchEntity):
+    """Control the confirmed TCX Pool Filtration mode."""
+
+    _attr_name = "Pump Power"
+    _attr_icon = "mdi:pump"
+
+    def __init__(self, entry: TCXConfigEntry) -> None:
+        super().__init__(entry)
+        self._attr_unique_id = f"{entry.data['device_id']}_pump_power"
+
+    @property
+    def available(self) -> bool:
+        data = self.coordinator.data or {}
+        return (
+            super().available
+            and data.get("pump_power_control_supported") is True
+            and isinstance(data.get("pump_power_setpoint"), bool)
+        )
+
+    @property
+    def is_on(self) -> bool | None:
+        value = (self.coordinator.data or {}).get("pump_power_setpoint")
+        return value if isinstance(value, bool) else None
+
+    async def async_turn_on(self, **kwargs: object) -> None:
+        await self._async_set_state(True)
+
+    async def async_turn_off(self, **kwargs: object) -> None:
+        await self._async_set_state(False)
+
+    async def _async_set_state(self, enabled: bool) -> None:
+        try:
+            await self.entry.runtime_data.client.async_set_pump_power(enabled)
+        except TCXError as err:
+            raise HomeAssistantError(str(err)) from err
 
 
 class TCXWaterfallSwitch(TCXEntity, SwitchEntity):
