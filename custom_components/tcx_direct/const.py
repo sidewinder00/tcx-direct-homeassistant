@@ -2,7 +2,7 @@ from __future__ import annotations
 
 DOMAIN = "tcx_direct"
 NAME = "Jandy TCX Direct"
-VERSION = "0.1.15"
+VERSION = "0.1.16"
 
 API_KEY = "EOOEMOW4YR6QNB07"
 ZODIAC_API = "https://prod.zodiac-io.com"
@@ -13,6 +13,9 @@ CONTROL_NAMESPACE = "tcx"
 CONF_DEVICE_ID = "device_id"
 CONF_DEVICE_NAME = "device_name"
 CONF_DEVICE_TYPE = "device_type"
+CONF_WATERFALL_RPM = "waterfall_rpm"
+
+DEFAULT_WATERFALL_RPM = 2850
 
 PLATFORMS = ["sensor", "binary_sensor", "button", "switch", "number"]
 
