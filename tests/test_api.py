@@ -309,6 +309,55 @@ def test_waterfall_control_waits_for_reported_confirmation() -> None:
     assert client.last_control_frame["payload"]["clientToken"] == "**REDACTED**"
 
 
+def test_waterfall_with_speed_confirms_relay_then_sets_manual_rpm() -> None:
+    client = make_client()
+    client.user_id = "12345"
+    client.websocket_connected = True
+    client.reported = {
+        "fcr0": {"fr": "Waterfall", "et": "FRLY", "app": "WF", "st": 0},
+        "filt0": {
+            "fr": "Filtration",
+            "et": "F_CTRL",
+            "app": "FILT",
+            "manSpd": 1100,
+            "minSpd": 600,
+            "maxSpd": 3450,
+        },
+        "ecm0": {"minSpd": 600, "maxSpd": 3450},
+    }
+
+    class FakeWebSocket:
+        closed = False
+
+        def __init__(self) -> None:
+            self.messages: list[dict[str, object]] = []
+
+        async def send_json(self, message: dict[str, object]) -> None:
+            self.messages.append(message)
+            desired = message["payload"]["state"]["desired"]
+            if "fcr0" in desired:
+                client.reported["fcr0"]["st"] = desired["fcr0"]["st"]
+            if "filt0" in desired:
+                client.reported["filt0"]["manSpd"] = desired["filt0"]["manSpd"]
+            client._resolve_pending_control()
+
+    websocket = FakeWebSocket()
+    client._ws = websocket  # type: ignore[assignment]
+
+    asyncio.run(client.async_set_waterfall_with_speed(2850))
+
+    desired_frames = [
+        message["payload"]["state"]["desired"] for message in websocket.messages
+    ]
+    assert desired_frames == [
+        {"fcr0": {"st": 1}},
+        {"filt0": {"manSpd": 2850}},
+    ]
+    assert client.control_command_counts["waterfall state"] == 1
+    assert client.control_command_counts["pump speed"] == 1
+    assert client.control_success_count == 2
+
+
 def test_pump_power_control_targets_confirmed_pool_mode() -> None:
     client = make_client()
     client.user_id = "12345"
