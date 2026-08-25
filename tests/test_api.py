@@ -42,6 +42,12 @@ def test_normalize_observed_tcx_state() -> None:
             "maxSpd": 3450,
             "spdList": [{"name": "Pool Filtration", "speed": 1100}],
         },
+        "filt0": {
+            "et": "F_CTRL",
+            "app": "FILT",
+            "manSpd": 2600,
+        },
+        "pool": {"et": "V_POS", "app": "POOL_M", "st": 1},
         "auxz0": {"st": 1, "currClr": 3},
         "fcr0": {"fr": "Waterfall", "et": "FRLY", "app": "WF", "st": 0},
     }
@@ -53,6 +59,10 @@ def test_normalize_observed_tcx_state() -> None:
     assert normalized["pool_temperature_setpoint"] == 79.9
     assert normalized["pump"] is True
     assert normalized["pump_rpm"] == 2600
+    assert normalized["pump_speed_setpoint"] == 2600
+    assert normalized["pump_power_setpoint"] is True
+    assert normalized["pump_power_control_supported"] is True
+    assert normalized["pump_speed_control_supported"] is True
     assert normalized["pump_preset"] == "Manual"
     assert normalized["light"] is True
     assert normalized["light_color"] == 3
@@ -77,6 +87,7 @@ def test_pump_priming_reports_commanded_rpm_and_requested_preset() -> None:
 
     assert normalized["pump"] is True
     assert normalized["pump_rpm"] == 2500
+    assert normalized["pump_speed_setpoint"] == 2850
     assert normalized["pump_preset"] == "Waterfall"
 
 
@@ -173,7 +184,7 @@ def test_waterfall_control_waits_for_reported_confirmation() -> None:
         async def send_json(self, message: dict[str, object]) -> None:
             self.messages.append(message)
             client.reported["fcr0"]["st"] = 1
-            client._resolve_pending_waterfall_state()
+            client._resolve_pending_control()
 
     websocket = FakeWebSocket()
     client._ws = websocket  # type: ignore[assignment]
@@ -192,6 +203,130 @@ def test_waterfall_control_waits_for_reported_confirmation() -> None:
     assert client.last_control_frame["namespace"] == "tcx"
     assert client.last_control_frame["target"] == "**REDACTED**"
     assert client.last_control_frame["payload"]["clientToken"] == "**REDACTED**"
+
+
+def test_pump_power_control_targets_confirmed_pool_mode() -> None:
+    client = make_client()
+    client.user_id = "12345"
+    client.websocket_connected = True
+    client.reported = {
+        "pool": {"fr": "Pool Filtration", "et": "V_POS", "app": "POOL_M", "st": 0},
+        "ecm0": {"st": 0},
+    }
+
+    class FakeWebSocket:
+        closed = False
+
+        def __init__(self) -> None:
+            self.messages: list[dict[str, object]] = []
+
+        async def send_json(self, message: dict[str, object]) -> None:
+            self.messages.append(message)
+            client.reported["pool"]["st"] = 1
+            client.reported["ecm0"]["st"] = 1
+            client._resolve_pending_control()
+
+    websocket = FakeWebSocket()
+    client._ws = websocket  # type: ignore[assignment]
+
+    asyncio.run(client.async_set_pump_power(True))
+
+    assert websocket.messages[0]["namespace"] == "tcx"
+    assert websocket.messages[0]["payload"]["state"]["desired"] == {
+        "pool": {"st": 1}
+    }
+    assert client.control_success_count == 1
+
+
+def test_pump_speed_control_targets_filter_controller_and_enforces_limits() -> None:
+    client = make_client()
+    client.user_id = "12345"
+    client.websocket_connected = True
+    client.reported = {
+        "filt0": {
+            "fr": "Filtration",
+            "et": "F_CTRL",
+            "app": "FILT",
+            "manSpd": 1100,
+            "minSpd": 600,
+            "maxSpd": 3450,
+        },
+        "ecm0": {"minSpd": 600, "maxSpd": 3450},
+    }
+
+    class FakeWebSocket:
+        closed = False
+
+        def __init__(self) -> None:
+            self.messages: list[dict[str, object]] = []
+
+        async def send_json(self, message: dict[str, object]) -> None:
+            self.messages.append(message)
+            client.reported["filt0"]["manSpd"] = 2250
+            client._resolve_pending_control()
+
+    websocket = FakeWebSocket()
+    client._ws = websocket  # type: ignore[assignment]
+
+    asyncio.run(client.async_set_pump_speed(2250))
+
+    assert websocket.messages[0]["namespace"] == "tcx"
+    assert websocket.messages[0]["payload"]["state"]["desired"] == {
+        "filt0": {"manSpd": 2250}
+    }
+    assert client.control_success_count == 1
+
+    with pytest.raises(api.TCXControlUnsupported, match="between 600 and 3450"):
+        asyncio.run(client.async_set_pump_speed(4000))
+
+
+def test_stale_subscription_refreshes_without_reconnect() -> None:
+    client = make_client()
+    client.user_id = "12345"
+    client.websocket_connected = True
+
+    class FakeWebSocket:
+        closed = False
+
+        async def send_json(self, message: dict[str, object]) -> None:
+            client._authorization_snapshot_event.set()
+
+    client._ws = FakeWebSocket()  # type: ignore[assignment]
+
+    assert asyncio.run(client._async_refresh_stale_subscription()) is True
+    assert client.watchdog_resubscribe_count == 1
+    assert client.watchdog_resubscribe_success_count == 1
+    assert client.watchdog_resubscribe_failure_count == 0
+    assert client.websocket_reconnect_count == 0
+
+
+def test_shadow_rate_limit_backs_off_without_marking_live_socket_offline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = make_client()
+    client.websocket_connected = True
+    client.cloud_reachable = True
+    delays: list[float] = []
+
+    async def get_shadow() -> dict[str, object]:
+        raise api.TCXRateLimited("HTTP 429", retry_after=180)
+
+    async def sleep(delay: float) -> None:
+        delays.append(delay)
+        if delay != 2:
+            client._stopping = True
+
+    monkeypatch.setattr(client, "async_get_shadow", get_shadow)
+    monkeypatch.setattr(api.asyncio, "sleep", sleep)
+
+    asyncio.run(client._shadow_loop())
+
+    assert delays == [2, 240]
+    assert client.shadow_rate_limit_count == 1
+    assert client.shadow_poll_interval == 240
+    assert client.cloud_reachable is True
+    assert client.last_error is None
+    assert client.last_shadow_error == "HTTP 429"
 
 
 def test_new_socket_does_not_inherit_previous_freshness(monkeypatch: pytest.MonkeyPatch) -> None:

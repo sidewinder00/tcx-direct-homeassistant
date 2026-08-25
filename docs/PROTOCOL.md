@@ -47,6 +47,12 @@ Observed fields:
 - `maxSpd` — maximum pump RPM
 - `spdList` — configured named speed presets when included in a full snapshot
 
+v0.1.12 uses the confirmed `F_CTRL`/`FILT` object as the Pump Speed control
+target and writes `manSpd`. The requested value is restricted to the reported
+`minSpd`/`maxSpd` range and is considered successful only when the same
+`manSpd` is reported back. This write mapping is intentionally conservative
+but remains provisional until it has been exercised against the live system.
+
 Example preset names observed during development:
 
 - Pool Filtration
@@ -105,7 +111,7 @@ Observed `currClr = 3` matched the legacy TCX client display name **Romance**. T
 
 ### Pool mode/valve state: `pool`
 
-Observed `pool.st` desired/reported changes correspond with Pool Filtration mode changes. These desired-state echoes are retained in sanitized diagnostics for future control-protocol work.
+Observed `pool.st` desired/reported changes correspond with Pool Filtration mode changes. v0.1.12 identifies this object by the `V_POS`/`POOL_M` type pair and uses it for the Pump Power control. The command is considered successful only after the requested `pool.st` value is reported back. This write mapping remains provisional until live validation.
 
 ### Waterfall feature relay: `fcr0`
 
@@ -170,12 +176,13 @@ The tested controller has not yet exposed a clearly identified native SWG/chlori
 
 ## Reliability behavior
 
-The socket being TCP/WebSocket-open is not considered sufficient proof that live TCX state is healthy. TCX Direct tracks actual `state.reported` messages and can rebuild the subscription when:
+The socket being TCP/WebSocket-open is not considered sufficient proof that live TCX state is healthy. TCX Direct tracks actual `state.reported` messages and:
 
-- reported-state traffic goes stale,
-- the configured maximum WebSocket session age is reached.
+- refreshes the Authorization subscription in place after 30 minutes without reported-state traffic,
+- reconnects only when that refresh is not confirmed,
+- rotates the WebSocket defensively after six hours.
 
-REST shadow polling updates cached state but does not independently rotate the WebSocket. The shadow document timestamp can advance without an underlying equipment-state change, so reconnect decisions remain centralized in the reported-state watchdog.
+REST shadow polling updates cached state but does not independently rotate the WebSocket. The normal interval is two minutes. HTTP 429 responses trigger exponential backoff up to 30 minutes and are tracked independently without marking the cloud unavailable while the WebSocket remains connected. The shadow document timestamp can advance without an underlying equipment-state change, so reconnect decisions remain centralized in the reported-state watchdog.
 
 Authentication refresh, reconnect backoff, state caching, and startup re-subscription are all handled inside the Home Assistant integration; no Supervisor add-on or local bridge is required.
 

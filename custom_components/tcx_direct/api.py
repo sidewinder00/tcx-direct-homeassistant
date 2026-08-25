@@ -28,7 +28,9 @@ from .const import (
     RECENT_WS_STRUCTURES,
     RECONNECT_MAX,
     SHADOW_INTERVAL,
+    SHADOW_RATE_LIMIT_MAX_INTERVAL,
     TOKEN_REFRESH_MARGIN,
+    WATCHDOG_RESUBSCRIBE_TIMEOUT,
     WEBSOCKET_STALE_SECONDS,
     WEBSOCKET_URL,
     ZODIAC_API,
@@ -50,6 +52,14 @@ class TCXConnectionError(TCXError):
     """Network or service connection failed."""
 
 
+class TCXRateLimited(TCXConnectionError):
+    """A Zodiac endpoint asked the client to reduce its request rate."""
+
+    def __init__(self, message: str, retry_after: float | None = None) -> None:
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
 class TCXDeviceNotFound(TCXError):
     """No matching TCX device was found."""
 
@@ -67,6 +77,13 @@ class TCXDevice:
     serial: str
     name: str
     device_type: str
+
+
+@dataclass(slots=True)
+class _PendingControl:
+    description: str
+    predicate: Callable[[dict[str, Any]], bool]
+    future: asyncio.Future[None]
 
 
 StateCallback = Callable[[dict[str, Any], str], Awaitable[None]]
@@ -325,6 +342,36 @@ def _find_waterfall_feature(
     return None
 
 
+def _find_pool_mode(
+    reported: dict[str, Any],
+) -> tuple[str, dict[str, Any]] | None:
+    """Return the confirmed Pool Filtration mode object."""
+    for key, value in reported.items():
+        if not isinstance(value, dict):
+            continue
+        if _norm(str(value.get("et", ""))) != "vpos":
+            continue
+        if _norm(str(value.get("app", ""))) != "poolm":
+            continue
+        return str(key), value
+    return None
+
+
+def _find_filter_controller(
+    reported: dict[str, Any],
+) -> tuple[str, dict[str, Any]] | None:
+    """Return the confirmed filtration-controller object."""
+    for key, value in reported.items():
+        if not isinstance(value, dict):
+            continue
+        if _norm(str(value.get("et", ""))) != "fctrl":
+            continue
+        if _norm(str(value.get("app", ""))) != "filt":
+            continue
+        return str(key), value
+    return None
+
+
 def build_set_state_message(
     device_id: str,
     user_id: str,
@@ -407,6 +454,22 @@ def normalize_tcx_state(reported: dict[str, Any]) -> dict[str, Any]:
         requested_rpm = _coerce_number(ecm0.get("manSpd"))
     if requested_rpm is None:
         requested_rpm = _coerce_number(filt0.get("manSpd"))
+
+    pump_speed_setpoint = _coerce_number(filt0.get("manSpd"))
+    if pump_speed_setpoint is None:
+        pump_speed_setpoint = _coerce_number(ecm0.get("manSpd"))
+    if pump_speed_setpoint is None:
+        pump_speed_setpoint = requested_rpm
+    pool_mode = _find_pool_mode(reported)
+    pump_power_setpoint = (
+        _coerce_bool(pool_mode[1].get("st")) if pool_mode is not None else None
+    )
+    pump_power_control_supported = pool_mode is not None
+    pump_speed_control_supported = (
+        _find_filter_controller(reported) is not None
+        and min_rpm is not None
+        and max_rpm is not None
+    )
 
     pump_preset = None
     if pump_state is not False and requested_rpm is not None:
@@ -521,6 +584,10 @@ def normalize_tcx_state(reported: dict[str, Any]) -> dict[str, Any]:
         "pump_rpm": pump_rpm,
         "pump_min_rpm": min_rpm,
         "pump_max_rpm": max_rpm,
+        "pump_speed_setpoint": pump_speed_setpoint,
+        "pump_power_setpoint": pump_power_setpoint,
+        "pump_power_control_supported": pump_power_control_supported,
+        "pump_speed_control_supported": pump_speed_control_supported,
         "pump_preset": pump_preset,
         "swc_level": _coerce_number(swc_raw),
         "light_color": light_color,
@@ -587,6 +654,13 @@ class TCXClient:
         self.shadow_request_count = 0
         self.shadow_success_count = 0
         self.shadow_failure_count = 0
+        self.shadow_rate_limit_count = 0
+        self.shadow_poll_interval = SHADOW_INTERVAL
+        self.last_shadow_error: str | None = None
+        self.last_shadow_rate_limited_at: str | None = None
+        self.watchdog_resubscribe_count = 0
+        self.watchdog_resubscribe_success_count = 0
+        self.watchdog_resubscribe_failure_count = 0
         self.last_ws_message_at: str | None = None
         self.last_ws_state_at: str | None = None
         self.last_shadow_update_at: str | None = None
@@ -614,14 +688,16 @@ class TCXClient:
         self._authorization_snapshot_event = asyncio.Event()
         self._auth_lock = asyncio.Lock()
         self._control_lock = asyncio.Lock()
-        self._pending_waterfall_state: tuple[
-            bool, asyncio.Future[None]
-        ] | None = None
+        self._pending_control: _PendingControl | None = None
 
         self.control_command_count = 0
         self.control_success_count = 0
         self.control_failure_count = 0
+        self.control_command_counts: dict[str, int] = {}
+        self.control_success_counts: dict[str, int] = {}
+        self.control_failure_counts: dict[str, int] = {}
         self.last_control_at: str | None = None
+        self.last_control_description: str | None = None
         self.last_control_error: str | None = None
         self.last_control_frame: dict[str, Any] | None = None
 
@@ -811,6 +887,18 @@ class TCXClient:
                     if response.status in (400, 404, 405):
                         unsupported.append(f"{version} HTTP {response.status}")
                         continue
+                    if response.status == 429:
+                        retry_after: float | None = None
+                        retry_after_header = response.headers.get("Retry-After")
+                        if retry_after_header is not None:
+                            try:
+                                retry_after = max(0.0, float(retry_after_header))
+                            except ValueError:
+                                pass
+                        raise TCXRateLimited(
+                            f"TCX shadow {version} returned HTTP 429",
+                            retry_after=retry_after,
+                        )
                     if response.status >= 400:
                         raise TCXConnectionError(
                             f"TCX shadow {version} returned HTTP {response.status}"
@@ -829,6 +917,8 @@ class TCXClient:
             self.shadow_supported = True
             self.cloud_reachable = True
             self.last_error = None
+            self.last_shadow_error = None
+            self.shadow_poll_interval = SHADOW_INTERVAL
             self.last_shadow_update_at = _utc_now_iso()
             self.shadow_success_count += 1
             _deep_merge(self.reported, reported)
@@ -874,25 +964,95 @@ class TCXClient:
         if self._ws is not None and not self._ws.closed:
             await self._ws.close(code=aiohttp.WSCloseCode.GOING_AWAY)
 
-    def _resolve_pending_waterfall_state(self) -> None:
-        pending = self._pending_waterfall_state
+    def _resolve_pending_control(self) -> None:
+        pending = self._pending_control
         if pending is None:
             return
-        expected, future = pending
-        feature = _find_waterfall_feature(self.reported)
-        actual = (
-            _coerce_bool(feature[1].get("st")) if feature is not None else None
-        )
-        if actual is expected and not future.done():
-            future.set_result(None)
+        if pending.predicate(self.reported) and not pending.future.done():
+            pending.future.set_result(None)
 
     def _fail_pending_control(self, message: str) -> None:
-        pending = self._pending_waterfall_state
+        pending = self._pending_control
         if pending is None:
             return
-        future = pending[1]
-        if not future.done():
-            future.set_exception(TCXConnectionError(message))
+        if not pending.future.done():
+            pending.future.set_exception(TCXConnectionError(message))
+
+    async def _async_send_control(
+        self,
+        desired: dict[str, Any],
+        description: str,
+        predicate: Callable[[dict[str, Any]], bool],
+    ) -> None:
+        """Send one serialized TCX command and require reported confirmation."""
+        ws = self._ws
+        if ws is None or ws.closed or not self.websocket_connected:
+            raise TCXConnectionError(
+                f"TCX WebSocket is not connected; {description} command was not sent"
+            )
+        if not self.device_id or self.user_id is None:
+            raise TCXConnectionError(
+                f"TCX device or user identity is unavailable; {description} command was not sent"
+            )
+
+        message = build_set_state_message(
+            self.device_id,
+            self.user_id,
+            CONTROL_NAMESPACE,
+            desired,
+        )
+        future: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+        pending = _PendingControl(description, predicate, future)
+        self._pending_control = pending
+        self.control_command_count += 1
+        self.control_command_counts[description] = (
+            self.control_command_counts.get(description, 0) + 1
+        )
+        self.last_control_at = _utc_now_iso()
+        self.last_control_description = description
+        self.last_control_error = None
+        self.last_control_frame = sanitize_diagnostics(message)
+
+        try:
+            await ws.send_json(message)
+            await asyncio.wait_for(future, timeout=CONTROL_CONFIRM_TIMEOUT)
+        except asyncio.TimeoutError as err:
+            message_text = (
+                f"TCX did not confirm {description} within "
+                f"{CONTROL_CONFIRM_TIMEOUT} seconds"
+            )
+            self.control_failure_count += 1
+            self.control_failure_counts[description] = (
+                self.control_failure_counts.get(description, 0) + 1
+            )
+            self.last_control_error = message_text
+            raise TCXConnectionError(message_text) from err
+        except asyncio.CancelledError:
+            raise
+        except TCXError as err:
+            self.control_failure_count += 1
+            self.control_failure_counts[description] = (
+                self.control_failure_counts.get(description, 0) + 1
+            )
+            self.last_control_error = str(err)
+            raise
+        except (aiohttp.ClientError, ConnectionError, RuntimeError) as err:
+            message_text = f"Unable to send TCX {description} command: {err}"
+            self.control_failure_count += 1
+            self.control_failure_counts[description] = (
+                self.control_failure_counts.get(description, 0) + 1
+            )
+            self.last_control_error = message_text
+            raise TCXConnectionError(message_text) from err
+        else:
+            self.control_success_count += 1
+            self.control_success_counts[description] = (
+                self.control_success_counts.get(description, 0) + 1
+            )
+            self.last_control_error = None
+        finally:
+            if self._pending_control is pending:
+                self._pending_control = None
 
     async def async_set_waterfall(self, enabled: bool) -> None:
         """Set the captured TCX waterfall feature and await reported state."""
@@ -906,59 +1066,74 @@ class TCXClient:
             current = _coerce_bool(feature_state.get("st"))
             if current is enabled:
                 return
-
-            ws = self._ws
-            if ws is None or ws.closed or not self.websocket_connected:
-                raise TCXConnectionError(
-                    "TCX WebSocket is not connected; waterfall command was not sent"
-                )
-            if not self.device_id or self.user_id is None:
-                raise TCXConnectionError(
-                    "TCX device or user identity is unavailable; waterfall command was not sent"
-                )
-
-            message = build_set_state_message(
-                self.device_id,
-                self.user_id,
-                CONTROL_NAMESPACE,
+            await self._async_send_control(
                 {feature_key: {"st": int(enabled)}},
+                "waterfall state",
+                lambda reported: (
+                    (confirmed := _find_waterfall_feature(reported)) is not None
+                    and _coerce_bool(confirmed[1].get("st")) is enabled
+                ),
             )
-            future: asyncio.Future[None] = asyncio.get_running_loop().create_future()
-            self._pending_waterfall_state = (enabled, future)
-            self.control_command_count += 1
-            self.last_control_at = _utc_now_iso()
-            self.last_control_error = None
-            self.last_control_frame = sanitize_diagnostics(message)
 
-            try:
-                await ws.send_json(message)
-                await asyncio.wait_for(future, timeout=CONTROL_CONFIRM_TIMEOUT)
-            except asyncio.TimeoutError as err:
-                message_text = (
-                    "TCX did not confirm the waterfall state within "
-                    f"{CONTROL_CONFIRM_TIMEOUT} seconds"
+    async def async_set_pump_power(self, enabled: bool) -> None:
+        """Set the confirmed Pool Filtration mode and await reported state."""
+        async with self._control_lock:
+            pool_mode = _find_pool_mode(self.reported)
+            if pool_mode is None:
+                raise TCXControlUnsupported(
+                    "This TCX controller has no confirmed V_POS/POOL_M pool mode"
                 )
-                self.control_failure_count += 1
-                self.last_control_error = message_text
-                raise TCXConnectionError(message_text) from err
-            except asyncio.CancelledError:
-                raise
-            except TCXError as err:
-                self.control_failure_count += 1
-                self.last_control_error = str(err)
-                raise
-            except (aiohttp.ClientError, ConnectionError, RuntimeError) as err:
-                message_text = f"Unable to send TCX waterfall command: {err}"
-                self.control_failure_count += 1
-                self.last_control_error = message_text
-                raise TCXConnectionError(message_text) from err
-            else:
-                self.control_success_count += 1
-                self.last_control_error = None
-            finally:
-                if self._pending_waterfall_state is not None:
-                    if self._pending_waterfall_state[1] is future:
-                        self._pending_waterfall_state = None
+            pool_key, pool_state = pool_mode
+            if _coerce_bool(pool_state.get("st")) is enabled:
+                return
+            await self._async_send_control(
+                {pool_key: {"st": int(enabled)}},
+                "pump power state",
+                lambda reported: (
+                    (confirmed := _find_pool_mode(reported)) is not None
+                    and _coerce_bool(confirmed[1].get("st")) is enabled
+                ),
+            )
+
+    async def async_set_pump_speed(self, speed: float) -> None:
+        """Set the filtration controller's manual speed and await confirmation."""
+        async with self._control_lock:
+            controller = _find_filter_controller(self.reported)
+            if controller is None:
+                raise TCXControlUnsupported(
+                    "This TCX controller has no confirmed F_CTRL/FILT controller"
+                )
+            controller_key, controller_state = controller
+            ecm0 = _mapping(self.reported.get("ecm0"))
+            minimum = _coerce_number(ecm0.get("minSpd"))
+            if minimum is None:
+                minimum = _coerce_number(controller_state.get("minSpd"))
+            maximum = _coerce_number(ecm0.get("maxSpd"))
+            if maximum is None:
+                maximum = _coerce_number(controller_state.get("maxSpd"))
+            if minimum is None or maximum is None:
+                raise TCXControlUnsupported(
+                    "The TCX controller did not report safe pump speed limits"
+                )
+
+            requested = int(round(speed))
+            if requested < minimum or requested > maximum:
+                raise TCXControlUnsupported(
+                    f"Pump speed must be between {minimum:.0f} and {maximum:.0f} RPM"
+                )
+            current = _coerce_number(controller_state.get("manSpd"))
+            if current is not None and round(current) == requested:
+                return
+            await self._async_send_control(
+                {controller_key: {"manSpd": requested}},
+                "pump speed",
+                lambda reported: (
+                    (confirmed := _find_filter_controller(reported)) is not None
+                    and (actual := _coerce_number(confirmed[1].get("manSpd")))
+                    is not None
+                    and round(actual) == requested
+                ),
+            )
 
     def _record_ws_structure(self, data: dict[str, Any]) -> None:
         structure = _ws_structure(data)
@@ -1230,7 +1405,7 @@ class TCXClient:
                         if reported is not None:
                             self.ws_reported_messages_received += 1
                             _deep_merge(self.reported, reported)
-                            self._resolve_pending_waterfall_state()
+                            self._resolve_pending_control()
                             self.last_ws_reported_monotonic = now
                             self.last_ws_state_at = self.last_ws_message_at
                             failures = 0
@@ -1307,29 +1482,68 @@ class TCXClient:
                 # integration failed and do not keep hammering an unsupported
                 # REST endpoint. The watchdog will rotate the WebSocket
                 # periodically to guarantee a fresh subscription.
-                self.last_error = str(err)
+                self.last_shadow_error = str(err)
+                await self._notify_status()
+            except TCXRateLimited as err:
+                self.shadow_rate_limit_count += 1
+                self.last_shadow_rate_limited_at = _utc_now_iso()
+                self.last_shadow_error = str(err)
+                next_interval = max(
+                    SHADOW_INTERVAL * 2,
+                    self.shadow_poll_interval * 2,
+                    err.retry_after or 0,
+                )
+                self.shadow_poll_interval = min(
+                    SHADOW_RATE_LIMIT_MAX_INTERVAL, next_interval
+                )
+                if not self.websocket_connected:
+                    self.cloud_reachable = False
                 await self._notify_status()
             except TCXAuthError as err:
                 self.last_error = str(err)
+                self.last_shadow_error = str(err)
                 self.cloud_reachable = False
                 self.id_token = None
                 await self._notify_status()
             except (TCXConnectionError, aiohttp.ClientError, asyncio.TimeoutError) as err:
-                self.last_error = str(err)
-                self.cloud_reachable = False
+                self.last_shadow_error = str(err)
+                if not self.websocket_connected:
+                    self.cloud_reachable = False
                 await self._notify_status()
             except asyncio.CancelledError:
                 raise
             except Exception as err:
-                self.last_error = f"Unexpected shadow error: {err}"
-                self.cloud_reachable = False
+                self.last_shadow_error = f"Unexpected shadow error: {err}"
+                if not self.websocket_connected:
+                    self.cloud_reachable = False
                 _LOGGER.exception("Unexpected TCX shadow polling failure")
                 await self._notify_status()
 
             try:
-                await asyncio.sleep(SHADOW_INTERVAL)
+                await asyncio.sleep(self.shadow_poll_interval)
             except asyncio.CancelledError:
                 raise
+
+    async def _async_refresh_stale_subscription(self) -> bool:
+        """Refresh a quiet subscription in place before replacing its socket."""
+        ws = self._ws
+        if ws is None or ws.closed or not self.websocket_connected:
+            return False
+        self._authorization_snapshot_event.clear()
+        self.watchdog_resubscribe_count += 1
+        try:
+            await self._send_authorization_subscribe(ws)
+            await asyncio.wait_for(
+                self._authorization_snapshot_event.wait(),
+                timeout=WATCHDOG_RESUBSCRIBE_TIMEOUT,
+            )
+        except asyncio.CancelledError:
+            raise
+        except (asyncio.TimeoutError, aiohttp.ClientError, ConnectionError, RuntimeError):
+            self.watchdog_resubscribe_failure_count += 1
+            return False
+        self.watchdog_resubscribe_success_count += 1
+        return True
 
     async def _watchdog_loop(self) -> None:
         """Guarantee that a logically stale TCX subscription gets replaced.
@@ -1360,10 +1574,9 @@ class TCXClient:
             )
 
             # A TCP/WebSocket connection is not enough. If no reported-state
-            # message has been received for the stale window, rebuild the
-            # subscription. This is the failure mode the original TCX client
-            # could sit in indefinitely. Desired-only heartbeat echoes do not
-            # count as live equipment telemetry.
+            # message has arrived for the stale window, first refresh the
+            # Authorization subscription on the existing socket. Reconnect
+            # only if Zodiac does not answer that read-only refresh.
             if (
                 (reported_age is None and age >= WEBSOCKET_STALE_SECONDS)
                 or (
@@ -1371,11 +1584,15 @@ class TCXClient:
                     and reported_age >= WEBSOCKET_STALE_SECONDS
                 )
             ):
-                _LOGGER.warning(
-                    "TCX WebSocket has produced no reported state for %s seconds; reconnecting",
+                _LOGGER.info(
+                    "TCX WebSocket has produced no reported state for %s seconds; refreshing subscription",
                     f"{age:.0f}" if reported_age is None else f"{reported_age:.0f}",
                 )
-                await self.async_force_reconnect("watchdog_stale_stream")
+                if not await self._async_refresh_stale_subscription():
+                    _LOGGER.warning(
+                        "TCX subscription refresh was not confirmed; reconnecting"
+                    )
+                    await self.async_force_reconnect("watchdog_stale_stream")
                 continue
 
             if age >= MAX_WEBSOCKET_SESSION:

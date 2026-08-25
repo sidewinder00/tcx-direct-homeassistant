@@ -2,6 +2,21 @@
 
 All notable changes to Jandy TCX Direct are documented here.
 
+## [0.1.12] - 2026-08-25
+
+### Added
+- Add separate Pump Power and Pump Speed controls while preserving the existing read-only pump status, RPM, preset, and limit sensors.
+- Add a dedicated Waterfall Status point under Sensors while retaining the Waterfall switch under Controls.
+- Add per-command control, shadow rate-limit, and watchdog re-subscription counters to diagnostics.
+
+### Fixed
+- Back off REST shadow polling after HTTP 429 responses and stop marking the entire cloud unavailable when the primary WebSocket remains connected.
+- Refresh a quiet Authorization subscription in place before reconnecting, reducing idle connection churn.
+
+### Changed
+- Poll the secondary REST shadow every two minutes, use a 30-minute reported-state stale window, and rotate WebSocket sessions defensively every six hours.
+- Require reported-state confirmation for pump power and speed commands and constrain speed requests to the controller's reported minimum and maximum RPM.
+
 ## [0.1.11] - 2026-08-25
 
 ### Fixed

@@ -9,7 +9,7 @@ TCX Direct connects Home Assistant directly to the iAquaLink/Zodiac cloud. It do
 
 ## Current version
 
-**v0.1.11**
+**v0.1.12**
 
 The integration prioritizes reliable telemetry and conservative equipment control. Native control is enabled only for TCX equipment whose state and write behavior have been captured and validated; other equipment remains read-only.
 
@@ -22,7 +22,7 @@ The integration prioritizes reliable telemetry and conservative equipment contro
 - Pool light state
 - Pool light color number
 - Pool light color name
-- Waterfall state and on/off control
+- Waterfall status
 - Pool temperature setpoint
 - Pump minimum and maximum RPM
 - Wi-Fi RSSI
@@ -33,7 +33,13 @@ The integration prioritizes reliable telemetry and conservative equipment contro
 - Last successful update, WebSocket update, and shadow update
 - Manual diagnostic reconnect button
 
-The Waterfall switch becomes available only when the controller reports a feature relay identified by the confirmed `FRLY`/`WF` type pair. Commands use the Zodiac WebSocket state-controller protocol in the TCX device namespace and must be confirmed by the controller's reported state before Home Assistant reports success.
+Controls are exposed separately from the read-only sensor points:
+
+- Pump Power on/off
+- Pump Speed setpoint, constrained to the controller's reported limits
+- Waterfall on/off
+
+The Waterfall switch becomes available only when the controller reports a feature relay identified by the confirmed `FRLY`/`WF` type pair. Pump controls likewise require the confirmed Pool Filtration and filtration-controller objects. Commands use the Zodiac WebSocket state-controller protocol in the TCX device namespace and must be confirmed by the controller's reported state before Home Assistant reports success.
 
 Equipment air temperature and salt-water chlorinator level remain disabled by default because the tested TCX controller has not exposed trustworthy native values for those fields.
 
@@ -44,11 +50,11 @@ The integration is designed around the failure mode where an iAquaLink/TCX conne
 - Direct iAquaLink/Zodiac authentication and TCX discovery
 - Persistent Zodiac WebSocket subscription
 - 30-second WebSocket heartbeat
-- Reported-state watchdog rather than relying only on TCP/WebSocket-open state
+- Reported-state watchdog that refreshes a quiet subscription before reconnecting
 - Automatic reconnect with backoff
 - Automatic re-authentication and proactive token refresh
-- REST shadow fallback/watchdog when supported by the controller
-- Periodic WebSocket session rotation
+- REST shadow fallback with rate-limit backoff when supported by the controller
+- Six-hour defensive WebSocket session rotation
 - Startup Authorization re-subscription/bootstrap
 - Last-known normalized-state persistence
 - Full merged reported-state persistence across Home Assistant restarts

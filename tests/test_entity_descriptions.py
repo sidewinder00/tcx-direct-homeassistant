@@ -8,6 +8,7 @@ ENTITY_FILES = (
     Path("custom_components/tcx_direct/binary_sensor.py"),
     Path("custom_components/tcx_direct/button.py"),
     Path("custom_components/tcx_direct/switch.py"),
+    Path("custom_components/tcx_direct/number.py"),
 )
 
 
@@ -27,3 +28,15 @@ def test_entity_categories_use_home_assistant_enum() -> None:
         expression == "EntityCategory.DIAGNOSTIC"
         for _path, _line, expression in categories
     ), categories
+
+
+def test_status_points_and_writable_controls_remain_separate() -> None:
+    binary_sensor = Path("custom_components/tcx_direct/binary_sensor.py").read_text()
+    switch = Path("custom_components/tcx_direct/switch.py").read_text()
+    number = Path("custom_components/tcx_direct/number.py").read_text()
+
+    assert 'key="pump"' in binary_sensor
+    assert 'key="waterfall_status"' in binary_sensor
+    assert "TCXPumpPowerSwitch" in switch
+    assert "TCXWaterfallSwitch" in switch
+    assert "TCXPumpSpeedNumber" in number
