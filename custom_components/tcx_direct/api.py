@@ -1097,6 +1097,21 @@ class TCXClient:
                 ),
             )
 
+    async def async_set_waterfall_with_speed(self, speed: float) -> None:
+        """Enable Waterfall, then apply its configured manual pump speed."""
+        await self.async_set_waterfall(True)
+        try:
+            await self.async_set_pump_speed(speed)
+        except TCXError:
+            try:
+                await self.async_set_waterfall(False)
+            except TCXError as rollback_error:
+                _LOGGER.warning(
+                    "Unable to turn Waterfall back off after its RPM command failed: %s",
+                    rollback_error,
+                )
+            raise
+
     async def async_set_pump_power(self, enabled: bool) -> None:
         """Set the confirmed Pool Filtration mode and await reported state."""
         async with self._control_lock:
