@@ -8,6 +8,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from . import TCXConfigEntry
 from .api import TCXError
 from .entity import TCXEntity
+from .number import configured_waterfall_rpm
 
 
 async def async_setup_entry(
@@ -110,8 +111,15 @@ class TCXWaterfallSwitch(TCXEntity, SwitchEntity):
 
     @property
     def available(self) -> bool:
-        return super().available and isinstance(
-            (self.coordinator.data or {}).get("waterfall"), bool
+        data = self.coordinator.data or {}
+        return (
+            super().available
+            and isinstance(data.get("waterfall"), bool)
+            and data.get("pump_speed_control_supported") is True
+            and isinstance(data.get("pump_min_rpm"), (int, float))
+            and not isinstance(data.get("pump_min_rpm"), bool)
+            and isinstance(data.get("pump_max_rpm"), (int, float))
+            and not isinstance(data.get("pump_max_rpm"), bool)
         )
 
     @property
@@ -127,6 +135,12 @@ class TCXWaterfallSwitch(TCXEntity, SwitchEntity):
 
     async def _async_set_state(self, enabled: bool) -> None:
         try:
-            await self.entry.runtime_data.client.async_set_waterfall(enabled)
+            client = self.entry.runtime_data.client
+            if enabled:
+                await client.async_set_waterfall_with_speed(
+                    configured_waterfall_rpm(self.entry)
+                )
+            else:
+                await client.async_set_waterfall(False)
         except TCXError as err:
             raise HomeAssistantError(str(err)) from err
