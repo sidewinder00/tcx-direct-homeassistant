@@ -9,7 +9,7 @@ TCX Direct connects Home Assistant directly to the iAquaLink/Zodiac cloud. It do
 
 ## Current version
 
-**v0.1.12**
+**v0.1.13**
 
 The integration prioritizes reliable telemetry and conservative equipment control. Native control is enabled only for TCX equipment whose state and write behavior have been captured and validated; other equipment remains read-only.
 
@@ -37,9 +37,10 @@ Controls are exposed separately from the read-only sensor points:
 
 - Pump Power on/off
 - Pump Speed setpoint, constrained to the controller's reported limits
+- Pool Light Power on/off
 - Waterfall on/off
 
-The Waterfall switch becomes available only when the controller reports a feature relay identified by the confirmed `FRLY`/`WF` type pair. Pump controls likewise require the confirmed Pool Filtration and filtration-controller objects. Commands use the Zodiac WebSocket state-controller protocol in the TCX device namespace and must be confirmed by the controller's reported state before Home Assistant reports success.
+The Pool Light Power switch becomes available only when the controller reports a light identified by the confirmed `JL`/`POOL_LT` type pair. The Waterfall switch similarly requires the confirmed `FRLY`/`WF` feature relay, and pump controls require the confirmed Pool Filtration and filtration-controller objects. Commands use the Zodiac WebSocket state-controller protocol in the TCX device namespace and must be confirmed by the controller's reported state before Home Assistant reports success.
 
 Equipment air temperature and salt-water chlorinator level remain disabled by default because the tested TCX controller has not exposed trustworthy native values for those fields.
 

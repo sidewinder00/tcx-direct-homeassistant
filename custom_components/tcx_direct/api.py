@@ -372,6 +372,21 @@ def _find_filter_controller(
     return None
 
 
+def _find_pool_light(
+    reported: dict[str, Any],
+) -> tuple[str, dict[str, Any]] | None:
+    """Return the confirmed Jandy pool-light object."""
+    for key, value in reported.items():
+        if not isinstance(value, dict):
+            continue
+        if _norm(str(value.get("et", ""))) != "jl":
+            continue
+        if _norm(str(value.get("app", ""))) != "poollt":
+            continue
+        return str(key), value
+    return None
+
+
 def build_set_state_message(
     device_id: str,
     user_id: str,
@@ -516,9 +531,10 @@ def normalize_tcx_state(reported: dict[str, Any]) -> dict[str, Any]:
         air_temperature = _tcx_temperature(air_temp_raw)
 
     # ---- Pool light --------------------------------------------------------
-    auxz0 = _mapping(reported.get("auxz0"))
-    light_state = _coerce_bool(auxz0.get("st"))
-    light_color_raw = _coerce_number(auxz0.get("currClr"))
+    pool_light = _find_pool_light(reported)
+    pool_light_state = pool_light[1] if pool_light is not None else {}
+    light_state = _coerce_bool(pool_light_state.get("st"))
+    light_color_raw = _coerce_number(pool_light_state.get("currClr"))
     light_color = int(light_color_raw) if light_color_raw is not None else None
 
     # currClr falls back to 0 while this controller's light is off, while
@@ -588,6 +604,8 @@ def normalize_tcx_state(reported: dict[str, Any]) -> dict[str, Any]:
         "pump_power_setpoint": pump_power_setpoint,
         "pump_power_control_supported": pump_power_control_supported,
         "pump_speed_control_supported": pump_speed_control_supported,
+        "light_power_setpoint": light_state,
+        "light_control_supported": pool_light is not None,
         "pump_preset": pump_preset,
         "swc_level": _coerce_number(swc_raw),
         "light_color": light_color,
@@ -1091,6 +1109,26 @@ class TCXClient:
                 "pump power state",
                 lambda reported: (
                     (confirmed := _find_pool_mode(reported)) is not None
+                    and _coerce_bool(confirmed[1].get("st")) is enabled
+                ),
+            )
+
+    async def async_set_pool_light(self, enabled: bool) -> None:
+        """Set the captured TCX pool light and await reported state."""
+        async with self._control_lock:
+            pool_light = _find_pool_light(self.reported)
+            if pool_light is None:
+                raise TCXControlUnsupported(
+                    "This TCX controller has no confirmed JL/POOL_LT pool light"
+                )
+            light_key, light_state = pool_light
+            if _coerce_bool(light_state.get("st")) is enabled:
+                return
+            await self._async_send_control(
+                {light_key: {"st": int(enabled)}},
+                "pool light state",
+                lambda reported: (
+                    (confirmed := _find_pool_light(reported)) is not None
                     and _coerce_bool(confirmed[1].get("st")) is enabled
                 ),
             )

@@ -38,5 +38,6 @@ def test_status_points_and_writable_controls_remain_separate() -> None:
     assert 'key="pump"' in binary_sensor
     assert 'key="waterfall_status"' in binary_sensor
     assert "TCXPumpPowerSwitch" in switch
+    assert "TCXPoolLightSwitch" in switch
     assert "TCXWaterfallSwitch" in switch
     assert "TCXPumpSpeedNumber" in number

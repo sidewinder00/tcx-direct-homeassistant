@@ -2,6 +2,12 @@
 
 All notable changes to Jandy TCX Direct are documented here.
 
+## [0.1.13] - 2026-08-25
+
+### Added
+- Add a separate Pool Light Power control while preserving Pool Light status, color number, and color name under Sensors.
+- Discover the writable light object by its confirmed `JL`/`POOL_LT` type pair and require reported-state confirmation for every on/off command.
+
 ## [0.1.12] - 2026-08-25
 
 ### Added

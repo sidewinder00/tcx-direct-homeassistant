@@ -48,7 +48,7 @@ def test_normalize_observed_tcx_state() -> None:
             "manSpd": 2600,
         },
         "pool": {"et": "V_POS", "app": "POOL_M", "st": 1},
-        "auxz0": {"st": 1, "currClr": 3},
+        "auxz0": {"et": "JL", "app": "POOL_LT", "st": 1, "currClr": 3},
         "fcr0": {"fr": "Waterfall", "et": "FRLY", "app": "WF", "st": 0},
     }
 
@@ -65,6 +65,8 @@ def test_normalize_observed_tcx_state() -> None:
     assert normalized["pump_speed_control_supported"] is True
     assert normalized["pump_preset"] == "Manual"
     assert normalized["light"] is True
+    assert normalized["light_power_setpoint"] is True
+    assert normalized["light_control_supported"] is True
     assert normalized["light_color"] == 3
     assert normalized["light_color_name"] == "Romance"
     assert normalized["waterfall"] is False
@@ -95,6 +97,8 @@ def test_light_color_clears_when_light_is_off() -> None:
     normalized = api.normalize_tcx_state(
         {
             "auxz0": {
+                "et": "JL",
+                "app": "POOL_LT",
                 "st": 0,
                 "currClr": 0,
                 "cmdClr": 3,
@@ -106,6 +110,18 @@ def test_light_color_clears_when_light_is_off() -> None:
     assert normalized["light"] is False
     assert normalized["light_color"] is None
     assert normalized["light_color_name"] is None
+
+
+def test_pool_light_requires_confirmed_equipment_type() -> None:
+    assert api.normalize_tcx_state(
+        {"auxz0": {"et": "JL", "app": "POOL_LT", "st": 1}}
+    )["light"] is True
+    assert api.normalize_tcx_state(
+        {"auxz0": {"et": "OTHER", "app": "POOL_LT", "st": 1}}
+    )["light"] is None
+    assert api.normalize_tcx_state(
+        {"auxz0": {"et": "JL", "app": "OTHER", "st": 1}}
+    )["light"] is None
 
 
 def test_derived_values_clear_when_equipment_turns_off() -> None:
@@ -236,6 +252,44 @@ def test_pump_power_control_targets_confirmed_pool_mode() -> None:
         "pool": {"st": 1}
     }
     assert client.control_success_count == 1
+
+
+def test_pool_light_control_targets_confirmed_light_and_waits_for_report() -> None:
+    client = make_client()
+    client.user_id = "12345"
+    client.websocket_connected = True
+    client.reported = {
+        "auxz4": {
+            "fr": "Pool Light",
+            "et": "JL",
+            "app": "POOL_LT",
+            "st": 0,
+            "currClr": 3,
+        }
+    }
+
+    class FakeWebSocket:
+        closed = False
+
+        def __init__(self) -> None:
+            self.messages: list[dict[str, object]] = []
+
+        async def send_json(self, message: dict[str, object]) -> None:
+            self.messages.append(message)
+            client.reported["auxz4"]["st"] = 1
+            client._resolve_pending_control()
+
+    websocket = FakeWebSocket()
+    client._ws = websocket  # type: ignore[assignment]
+
+    asyncio.run(client.async_set_pool_light(True))
+
+    assert websocket.messages[0]["namespace"] == "tcx"
+    assert websocket.messages[0]["payload"]["state"]["desired"] == {
+        "auxz4": {"st": 1}
+    }
+    assert client.control_command_counts["pool light state"] == 1
+    assert client.control_success_counts["pool light state"] == 1
 
 
 def test_pump_speed_control_targets_filter_controller_and_enforces_limits() -> None:

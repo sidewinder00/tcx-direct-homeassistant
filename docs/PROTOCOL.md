@@ -109,6 +109,21 @@ Observed fields include:
 
 Observed `currClr = 3` matched the legacy TCX client display name **Romance**. The integration currently carries the P-Series/IntelliBrite-style color-name table used by that controller behavior.
 
+The tested controller identifies this object with `et: "JL"` and
+`app: "POOL_LT"`. Captured official-client traffic changed only `st` for
+normal light power operation:
+
+```json
+{"auxz0": {"st": 1}}
+{"auxz0": {"st": 0}}
+```
+
+v0.1.13 discovers the light object from that type pair instead of assuming its
+index, sends the desired state through the `tcx` device namespace, and waits
+for the requested `st` value to be reported back. Light color remains a
+read-only sensor because a color-write command has not yet been captured and
+validated.
+
 ### Pool mode/valve state: `pool`
 
 Observed `pool.st` desired/reported changes correspond with Pool Filtration mode changes. v0.1.12 identifies this object by the `V_POS`/`POOL_M` type pair and uses it for the Pump Power control. The command is considered successful only after the requested `pool.st` value is reported back. This write mapping remains provisional until live validation.
