@@ -2,6 +2,16 @@
 
 All notable changes to Jandy TCX Direct are documented here.
 
+## [0.1.16] - 2026-08-25
+
+### Added
+- Add a persistent Waterfall RPM control, defaulting to 2850 RPM and constrained to the controller's reported pump limits.
+- Apply Waterfall RPM after the Waterfall relay is confirmed on, and apply changes immediately while Waterfall is running.
+
+### Changed
+- Require confirmed pump-speed control and safe RPM limits before exposing the Waterfall switch, since Waterfall now coordinates the feature relay with the filtration speed.
+- Turn Waterfall back off if its RPM command fails, avoiding a partially applied on-command.
+
 ## [0.1.15] - 2026-08-25
 
 ### Changed

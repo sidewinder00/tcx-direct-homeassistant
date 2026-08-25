@@ -163,9 +163,11 @@ that field for normal operation:
 ```
 
 The controller reported the matching state within approximately one second.
-Pump action and valve positioning are coordinated by the controller; preset
-index `ar: 3` matches the configured Waterfall pump speed of 2850 RPM on the
-tested system.
+Valve positioning is coordinated by the controller. Preset index `ar: 3`
+matches the configured Waterfall pump speed of 2850 RPM on the tested system,
+but live testing with Home Assistant-managed filtration speeds showed that the
+controller did not reliably apply that preset when the feature relay turned
+on.
 
 TCX Direct sends this desired state through the Zodiac WebSocket `setState`
 action in the `tcx` device namespace. The Authorization snapshot's `fea`
@@ -174,6 +176,14 @@ silently ignored by Zodiac during the v0.1.9 live test. A control call is
 successful only after the matching `fcr0.st` value is received in reported
 state. The object key is discovered from the `FRLY`/`WF` type pair rather than
 assumed to be `fcr0`.
+
+Starting in v0.1.16, TCX Direct exposes a persistent Waterfall RPM number that
+defaults to 2850 RPM and is constrained by `minSpd`/`maxSpd`. After the relay's
+on-state is confirmed, the integration writes the configured value to
+`filt0.manSpd` and requires the normal pump-speed confirmation. Changing the
+Waterfall RPM number while the relay is active applies the new speed
+immediately. If the speed command fails during turn-on, the integration tries
+to return the relay to off rather than leaving a partially applied command.
 
 ## Device/configuration fields
 
