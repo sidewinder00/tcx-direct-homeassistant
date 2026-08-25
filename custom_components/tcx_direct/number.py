@@ -21,9 +21,9 @@ async def async_setup_entry(
 
 
 class TCXPumpSpeedNumber(TCXEntity, NumberEntity):
-    """Control the TCX filtration speed setpoint."""
+    """Control the TCX manual filtration speed setpoint."""
 
-    _attr_name = "Pump Speed"
+    _attr_name = "Pump Manual Speed"
     _attr_icon = "mdi:speedometer"
     _attr_native_step = 25.0
     _attr_native_unit_of_measurement = "rpm"

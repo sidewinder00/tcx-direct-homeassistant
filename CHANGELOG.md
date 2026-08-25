@@ -2,6 +2,12 @@
 
 All notable changes to Jandy TCX Direct are documented here.
 
+## [0.1.15] - 2026-08-25
+
+### Changed
+- Rename the writable control to Pump Manual Speed and make its displayed value follow the same `filt0.manSpd` field that it writes and confirms.
+- Keep `cmdSpd` exclusively on the read-only Pump RPM sensor so priming, filtration, and controller-selected runtime changes do not overwrite the manual setpoint control.
+
 ## [0.1.14] - 2026-08-25
 
 ### Changed
