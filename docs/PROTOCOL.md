@@ -58,16 +58,19 @@ Example preset names observed during development:
 Observed live fields:
 
 - `st` — motor state
-- `reqSpd` — requested live RPM
+- `reqSpd` — requested preset RPM
 - `manSpd` — manual/current configured RPM
-- `cmdSpd` — internal commanded RPM; **not treated as the current pump speed**
+- `cmdSpd` — active motor command RPM, including the priming phase
 - `minSpd`
 - `maxSpd`
 - `spdList`
 
-TCX Direct prefers `ecm0.reqSpd`, then `ecm0.manSpd`, then `filt0.manSpd`. If the pump state is explicitly off, the Home Assistant RPM entity reports `0` rather than a retained setpoint.
-
-`cmdSpd` is intentionally excluded from the current-RPM selection because it has been observed holding an internal/priming value while the pump was actually running at a different requested speed.
+For the live Pump RPM sensor, TCX Direct prefers `ecm0.cmdSpd`, then
+`ecm0.reqSpd`, `ecm0.manSpd`, and `filt0.manSpd`. During priming, `cmdSpd`
+reports the active priming speed while `reqSpd` retains the selected preset's
+eventual speed. Preset matching therefore uses `reqSpd` independently. If the
+pump state is explicitly off, the RPM entity reports `0` rather than a retained
+setpoint.
 
 ### Pool water temperature: `water`
 

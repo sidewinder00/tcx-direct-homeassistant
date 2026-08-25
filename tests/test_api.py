@@ -61,6 +61,25 @@ def test_normalize_observed_tcx_state() -> None:
     assert normalized["swc_level"] is None
 
 
+def test_pump_priming_reports_commanded_rpm_and_requested_preset() -> None:
+    normalized = api.normalize_tcx_state(
+        {
+            "ecm0": {
+                "st": 1,
+                "cmdSpd": 2500,
+                "reqSpd": 2850,
+                "manSpd": 2850,
+                "prmSpd": 2500,
+                "spdList": [{"name": "Waterfall", "speed": 2850}],
+            }
+        }
+    )
+
+    assert normalized["pump"] is True
+    assert normalized["pump_rpm"] == 2500
+    assert normalized["pump_preset"] == "Waterfall"
+
+
 def test_light_color_clears_when_light_is_off() -> None:
     normalized = api.normalize_tcx_state(
         {

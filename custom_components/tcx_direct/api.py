@@ -377,15 +377,17 @@ def normalize_tcx_state(reported: dict[str, Any]) -> dict[str, Any]:
     flat = _flatten(reported)
 
     # ---- Variable-speed pump ----------------------------------------------
-    # Live ECM updates contain reqSpd/manSpd/st. filt0 is the filtration
-    # controller shadow and is retained as a fallback. reqSpd tracks the
-    # requested live speed more reliably than cmdSpd (which can temporarily
-    # contain priming/internal motor commands).
+    # Live ECM updates distinguish the motor's active command (cmdSpd) from
+    # the requested preset speed (reqSpd). During priming these intentionally
+    # differ, so keep them separate: cmdSpd drives the live RPM sensor while
+    # reqSpd identifies the selected preset. filt0 remains a fallback.
     ecm0 = _mapping(reported.get("ecm0"))
     filt0 = _mapping(reported.get("filt0"))
     pump_obj = ecm0 or filt0
     pump_state = _coerce_bool(pump_obj.get("st"))
-    pump_rpm = _coerce_number(ecm0.get("reqSpd"))
+    pump_rpm = _coerce_number(ecm0.get("cmdSpd"))
+    if pump_rpm is None:
+        pump_rpm = _coerce_number(ecm0.get("reqSpd"))
     if pump_rpm is None:
         pump_rpm = _coerce_number(ecm0.get("manSpd"))
     if pump_rpm is None:
@@ -400,15 +402,21 @@ def normalize_tcx_state(reported: dict[str, Any]) -> dict[str, Any]:
     if max_rpm is None:
         max_rpm = _coerce_number(filt0.get("maxSpd"))
 
+    requested_rpm = _coerce_number(ecm0.get("reqSpd"))
+    if requested_rpm is None:
+        requested_rpm = _coerce_number(ecm0.get("manSpd"))
+    if requested_rpm is None:
+        requested_rpm = _coerce_number(filt0.get("manSpd"))
+
     pump_preset = None
-    if pump_state is not False and pump_rpm is not None:
+    if pump_state is not False and requested_rpm is not None:
         speed_list = ecm0.get("spdList") or filt0.get("spdList") or []
         if isinstance(speed_list, list):
             for preset in speed_list:
                 if not isinstance(preset, dict):
                     continue
                 speed = _coerce_number(preset.get("speed"))
-                if speed is not None and round(speed) == round(pump_rpm):
+                if speed is not None and round(speed) == round(requested_rpm):
                     name = preset.get("name")
                     if name:
                         pump_preset = str(name)

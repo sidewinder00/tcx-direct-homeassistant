@@ -2,6 +2,12 @@
 
 All notable changes to Jandy TCX Direct are documented here.
 
+## [0.1.11] - 2026-08-25
+
+### Fixed
+- Report the pump motor's active `cmdSpd` during priming instead of the eventual requested preset speed from `reqSpd`.
+- Match the Pump Preset independently against `reqSpd`, preserving `Waterfall` while the live RPM temporarily reports the 2500 RPM priming command.
+
 ## [0.1.10] - 2026-08-25
 
 ### Fixed
