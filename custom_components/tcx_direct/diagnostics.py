@@ -41,6 +41,7 @@ async def async_get_config_entry_diagnostics(
 
     diagnostics = {
         "config": dict(entry.data),
+        "options": dict(entry.options),
         "connection": {
             "healthy": client.healthy,
             "websocket_connected": client.websocket_connected,
