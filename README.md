@@ -9,7 +9,7 @@ TCX Direct connects Home Assistant directly to the iAquaLink/Zodiac cloud. It do
 
 ## Current version
 
-**v0.1.15**
+**v0.1.16**
 
 The integration prioritizes reliable telemetry and conservative equipment control. Native control is enabled only for TCX equipment whose state and write behavior have been captured and validated; other equipment remains read-only.
 
@@ -39,10 +39,11 @@ Controls are exposed separately from the read-only sensor points:
 - Pump Manual Speed control, constrained to the controller's reported limits
 - Pool Light Power on/off
 - Waterfall on/off
+- Waterfall RPM control, persisted by Home Assistant and constrained to the controller's reported limits
 
 The Pool Light Power switch becomes available only when the controller reports a light identified by the confirmed `JL`/`POOL_LT` type pair. The Waterfall switch similarly requires the confirmed `FRLY`/`WF` feature relay, and pump controls require the confirmed Pool Filtration and filtration-controller objects. Commands use the Zodiac WebSocket state-controller protocol in the TCX device namespace and must be confirmed by the controller's reported state before Home Assistant reports success.
 
-Pump RPM reports the active motor `cmdSpd`, including priming and other controller-selected runtime changes. Pump Manual Speed separately displays and writes the filtration controller's `manSpd`, so live RPM changes do not overwrite the writable setpoint.
+Pump RPM reports the active motor `cmdSpd`, including priming and other controller-selected runtime changes. Pump Manual Speed separately displays and writes the filtration controller's `manSpd`, so live RPM changes do not overwrite the writable setpoint. Waterfall RPM defaults to 2850 RPM; turning Waterfall on confirms the feature relay and then applies this value to `filt0.manSpd`. Changing Waterfall RPM while the feature is active applies the new value immediately.
 
 Equipment air temperature and salt-water chlorinator level remain disabled by default because the tested TCX controller has not exposed trustworthy native values for those fields.
 
