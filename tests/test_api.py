@@ -89,11 +89,11 @@ def test_pump_priming_reports_commanded_rpm_and_requested_preset() -> None:
 
     assert normalized["pump"] is True
     assert normalized["pump_rpm"] == 2500
-    assert normalized["pump_speed_setpoint"] == 2500
+    assert normalized["pump_speed_setpoint"] == 2850
     assert normalized["pump_preset"] == "Waterfall"
 
 
-def test_pump_speed_control_value_tracks_commanded_speed() -> None:
+def test_pump_manual_speed_remains_separate_from_commanded_speed() -> None:
     normalized = api.normalize_tcx_state(
         {
             "ecm0": {
@@ -113,7 +113,49 @@ def test_pump_speed_control_value_tracks_commanded_speed() -> None:
     )
 
     assert normalized["pump_rpm"] == 2650
-    assert normalized["pump_speed_setpoint"] == 2650
+    assert normalized["pump_speed_setpoint"] == 1100
+
+
+def test_pump_manual_speed_ignores_priming_and_runtime_changes() -> None:
+    priming = api.normalize_tcx_state(
+        {
+            "ecm0": {
+                "st": 1,
+                "cmdSpd": 2500,
+                "reqSpd": 1100,
+                "manSpd": 1100,
+                "minSpd": 600,
+                "maxSpd": 3450,
+            },
+            "filt0": {
+                "et": "F_CTRL",
+                "app": "FILT",
+                "manSpd": 2000,
+            },
+        }
+    )
+    runtime_change = api.normalize_tcx_state(
+        {
+            "ecm0": {
+                "st": 1,
+                "cmdSpd": 2650,
+                "reqSpd": 2650,
+                "manSpd": 2650,
+                "minSpd": 600,
+                "maxSpd": 3450,
+            },
+            "filt0": {
+                "et": "F_CTRL",
+                "app": "FILT",
+                "manSpd": 2000,
+            },
+        }
+    )
+
+    assert priming["pump_rpm"] == 2500
+    assert runtime_change["pump_rpm"] == 2650
+    assert priming["pump_speed_setpoint"] == 2000
+    assert runtime_change["pump_speed_setpoint"] == 2000
 
 
 def test_stopped_pump_speed_control_value_stays_within_writable_range() -> None:
