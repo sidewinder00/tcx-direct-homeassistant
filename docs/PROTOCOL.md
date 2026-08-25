@@ -53,6 +53,14 @@ target and writes `manSpd`. The requested value is restricted to the reported
 `manSpd` is reported back. This write mapping is intentionally conservative
 but remains provisional until it has been exercised against the live system.
 
+Starting in v0.1.14, the writable Pump Speed entity displays the active
+`ecm0.cmdSpd` whenever that value is inside the controller's reported limits.
+This keeps the control synchronized when the motor command changes through
+another client or during priming. When a stopped motor reports `cmdSpd = 0`,
+the entity falls back to the stored manual speed so its value remains inside
+the writable range. The existing bounded `filt0.manSpd` write and confirmation
+path is unchanged pending a captured official-client manual-speed command.
+
 Example preset names observed during development:
 
 - Pool Filtration

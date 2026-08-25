@@ -2,6 +2,12 @@
 
 All notable changes to Jandy TCX Direct are documented here.
 
+## [0.1.14] - 2026-08-25
+
+### Changed
+- Keep the writable Pump Speed value synchronized with the motor's active `cmdSpd` whenever it is within the reported RPM limits.
+- Fall back to the stored manual speed when a stopped pump reports `cmdSpd = 0`, keeping the number available and writable within its valid range.
+
 ## [0.1.13] - 2026-08-25
 
 ### Added
