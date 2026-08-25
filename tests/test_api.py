@@ -121,13 +121,13 @@ def test_build_set_state_message_matches_zodiac_protocol() -> None:
     assert api.build_set_state_message(
         "device",
         "12345",
-        "fea",
+        "tcx",
         {"fcr0": {"st": 1}},
         client_token="12345|test-token",
     ) == {
         "action": "setState",
         "version": 1,
-        "namespace": "fea",
+        "namespace": "tcx",
         "payload": {
             "state": {"desired": {"fcr0": {"st": 1}}},
             "clientToken": "12345|test-token",
@@ -161,7 +161,7 @@ def test_waterfall_control_waits_for_reported_confirmation() -> None:
 
     asyncio.run(client.async_set_waterfall(True))
 
-    assert websocket.messages[0]["namespace"] == "fea"
+    assert websocket.messages[0]["namespace"] == "tcx"
     assert websocket.messages[0]["payload"]["state"]["desired"] == {
         "fcr0": {"st": 1}
     }
@@ -169,6 +169,10 @@ def test_waterfall_control_waits_for_reported_confirmation() -> None:
     assert client.control_success_count == 1
     assert client.control_failure_count == 0
     assert client.last_control_error is None
+    assert client.last_control_frame is not None
+    assert client.last_control_frame["namespace"] == "tcx"
+    assert client.last_control_frame["target"] == "**REDACTED**"
+    assert client.last_control_frame["payload"]["clientToken"] == "**REDACTED**"
 
 
 def test_new_socket_does_not_inherit_previous_freshness(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -22,6 +22,7 @@ from .const import (
     BOOTSTRAP_SUBSCRIBE_ATTEMPTS,
     BOOTSTRAP_SUBSCRIBE_INTERVAL,
     CONTROL_CONFIRM_TIMEOUT,
+    CONTROL_NAMESPACE,
     IAQUALINK_API,
     MAX_WEBSOCKET_SESSION,
     RECENT_WS_STRUCTURES,
@@ -32,7 +33,7 @@ from .const import (
     WEBSOCKET_URL,
     ZODIAC_API,
 )
-from .redaction import safe_structure_key
+from .redaction import safe_structure_key, sanitize_diagnostics
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -614,6 +615,7 @@ class TCXClient:
         self.control_failure_count = 0
         self.last_control_at: str | None = None
         self.last_control_error: str | None = None
+        self.last_control_frame: dict[str, Any] | None = None
 
     def set_callbacks(
         self,
@@ -910,7 +912,7 @@ class TCXClient:
             message = build_set_state_message(
                 self.device_id,
                 self.user_id,
-                "fea",
+                CONTROL_NAMESPACE,
                 {feature_key: {"st": int(enabled)}},
             )
             future: asyncio.Future[None] = asyncio.get_running_loop().create_future()
@@ -918,6 +920,7 @@ class TCXClient:
             self.control_command_count += 1
             self.last_control_at = _utc_now_iso()
             self.last_control_error = None
+            self.last_control_frame = sanitize_diagnostics(message)
 
             try:
                 await ws.send_json(message)

@@ -2,12 +2,13 @@ from __future__ import annotations
 
 DOMAIN = "tcx_direct"
 NAME = "Jandy TCX Direct"
-VERSION = "0.1.9"
+VERSION = "0.1.10"
 
 API_KEY = "EOOEMOW4YR6QNB07"
 ZODIAC_API = "https://prod.zodiac-io.com"
 IAQUALINK_API = "https://r-api.iaqualink.net"
 WEBSOCKET_URL = "wss://prod-socket.zodiac-io.com/devices"
+CONTROL_NAMESPACE = "tcx"
 
 CONF_DEVICE_ID = "device_id"
 CONF_DEVICE_NAME = "device_name"
