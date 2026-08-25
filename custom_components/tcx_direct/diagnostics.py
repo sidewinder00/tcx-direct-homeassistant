@@ -92,6 +92,13 @@ async def async_get_config_entry_diagnostics(
             "success_count": client.shadow_success_count,
             "failure_count": client.shadow_failure_count,
         },
+        "control": {
+            "command_count": client.control_command_count,
+            "success_count": client.control_success_count,
+            "failure_count": client.control_failure_count,
+            "last_command_at": client.last_control_at,
+            "last_error": client.last_control_error,
+        },
         "authentication": {
             "full_login_count": client.full_login_count,
             "refresh_count": client.auth_refresh_count,

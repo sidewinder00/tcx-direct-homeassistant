@@ -2,6 +2,19 @@
 
 All notable changes to Jandy TCX Direct are documented here.
 
+## [0.1.9] - 2026-08-25
+
+### Added
+- Add a Waterfall switch for the captured `FRLY`/`WF` feature relay.
+- Send Waterfall on/off commands through the Zodiac WebSocket state-controller protocol and require matching reported-state confirmation.
+- Add control success/failure counters and the last control error to diagnostics.
+
+### Fixed
+- Clear the pump preset whenever the pump is explicitly off instead of retaining the previous preset such as `Manual` or `Waterfall`.
+
+### Changed
+- Discover the Waterfall feature by its confirmed equipment type markers rather than assuming a fixed object index.
+
 ## [0.1.8] - 2026-08-24
 
 ### Fixed

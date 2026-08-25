@@ -5,6 +5,8 @@ import hashlib
 import json
 import logging
 import random
+import secrets
+import string
 import time
 from collections import deque
 from collections.abc import Awaitable, Callable
@@ -19,6 +21,7 @@ from .const import (
     API_KEY,
     BOOTSTRAP_SUBSCRIBE_ATTEMPTS,
     BOOTSTRAP_SUBSCRIBE_INTERVAL,
+    CONTROL_CONFIRM_TIMEOUT,
     IAQUALINK_API,
     MAX_WEBSOCKET_SESSION,
     RECENT_WS_STRUCTURES,
@@ -52,6 +55,10 @@ class TCXDeviceNotFound(TCXError):
 
 class TCXShadowUnsupported(TCXError):
     """The TCX controller does not expose the Zodiac REST shadow endpoint."""
+
+
+class TCXControlUnsupported(TCXError):
+    """The requested equipment control is not available on this controller."""
 
 
 @dataclass(slots=True)
@@ -297,6 +304,73 @@ def _find_in_named_object(
     return None
 
 
+def _find_waterfall_feature(
+    reported: dict[str, Any],
+) -> tuple[str, dict[str, Any]] | None:
+    """Return the confirmed TCX waterfall feature-relay object.
+
+    Friendly names can be customized, so identify the equipment using the
+    controller's FRLY/WF type pair. Requiring both markers prevents an opaque
+    fcr object from being treated as a waterfall by position alone.
+    """
+    for key, value in reported.items():
+        if not isinstance(value, dict):
+            continue
+        if _norm(str(value.get("et", ""))) != "frly":
+            continue
+        if _norm(str(value.get("app", ""))) != "wf":
+            continue
+        return str(key), value
+    return None
+
+
+def build_set_state_message(
+    device_id: str,
+    user_id: str,
+    namespace: str,
+    desired: dict[str, Any],
+    *,
+    client_token: str | None = None,
+) -> dict[str, Any]:
+    """Build the Zodiac WebSocket setState message used by current clients."""
+    alphabet = string.ascii_letters + string.digits
+    token = client_token or "|".join(
+        (
+            user_id,
+            "".join(secrets.choice(alphabet) for _ in range(22)),
+            "".join(secrets.choice(alphabet) for _ in range(22)),
+        )
+    )
+    return {
+        "action": "setState",
+        "version": 1,
+        "namespace": namespace,
+        "payload": {
+            "state": {"desired": deepcopy(desired)},
+            "clientToken": token,
+        },
+        "service": "StateController",
+        "target": device_id,
+    }
+
+
+def merge_normalized_state(
+    current: dict[str, Any], parsed: dict[str, Any]
+) -> dict[str, Any]:
+    """Merge a sparse normalized update while clearing invalid derived values."""
+    merged = deepcopy(current)
+    for key, value in parsed.items():
+        if value is not None:
+            merged[key] = value
+
+    if parsed.get("light") is False:
+        merged.pop("light_color", None)
+        merged.pop("light_color_name", None)
+    if parsed.get("pump") is False:
+        merged.pop("pump_preset", None)
+    return merged
+
+
 def normalize_tcx_state(reported: dict[str, Any]) -> dict[str, Any]:
     """Normalize the TCX fields observed from AquaLink TCX 5.x."""
     flat = _flatten(reported)
@@ -412,6 +486,18 @@ def normalize_tcx_state(reported: dict[str, Any]) -> dict[str, Any]:
         ("pct", "percent", "level", "output", "production", "productionPercent", "setpoint"),
     )
 
+    # ---- Waterfall feature relay ------------------------------------------
+    # Captured official-client traffic identifies the waterfall as an FRLY/WF
+    # object and toggles fcr0.st between 1 and 0. The object key is discovered
+    # rather than assumed so compatible controllers can number features
+    # differently.
+    waterfall_feature = _find_waterfall_feature(reported)
+    waterfall_state = (
+        _coerce_bool(waterfall_feature[1].get("st"))
+        if waterfall_feature is not None
+        else None
+    )
+
     # ---- Useful diagnostics/configuration ---------------------------------
     wifi_rssi = _coerce_number(reported.get("connectionRSSI"))
     water_setpoint = None
@@ -432,6 +518,7 @@ def normalize_tcx_state(reported: dict[str, Any]) -> dict[str, Any]:
         "light_color_name": light_color_name,
         "pump": pump_state,
         "light": light_state,
+        "waterfall": waterfall_state,
         "wifi_rssi": wifi_rssi,
         "firmware_version": reported.get("firmwareVersion"),
         "connection_type": reported.get("connectionType"),
@@ -517,6 +604,16 @@ class TCXClient:
         self._reconnect_requested = asyncio.Event()
         self._authorization_snapshot_event = asyncio.Event()
         self._auth_lock = asyncio.Lock()
+        self._control_lock = asyncio.Lock()
+        self._pending_waterfall_state: tuple[
+            bool, asyncio.Future[None]
+        ] | None = None
+
+        self.control_command_count = 0
+        self.control_success_count = 0
+        self.control_failure_count = 0
+        self.last_control_at: str | None = None
+        self.last_control_error: str | None = None
 
     def set_callbacks(
         self,
@@ -766,6 +863,91 @@ class TCXClient:
         self._reconnect_requested.set()
         if self._ws is not None and not self._ws.closed:
             await self._ws.close(code=aiohttp.WSCloseCode.GOING_AWAY)
+
+    def _resolve_pending_waterfall_state(self) -> None:
+        pending = self._pending_waterfall_state
+        if pending is None:
+            return
+        expected, future = pending
+        feature = _find_waterfall_feature(self.reported)
+        actual = (
+            _coerce_bool(feature[1].get("st")) if feature is not None else None
+        )
+        if actual is expected and not future.done():
+            future.set_result(None)
+
+    def _fail_pending_control(self, message: str) -> None:
+        pending = self._pending_waterfall_state
+        if pending is None:
+            return
+        future = pending[1]
+        if not future.done():
+            future.set_exception(TCXConnectionError(message))
+
+    async def async_set_waterfall(self, enabled: bool) -> None:
+        """Set the captured TCX waterfall feature and await reported state."""
+        async with self._control_lock:
+            feature = _find_waterfall_feature(self.reported)
+            if feature is None:
+                raise TCXControlUnsupported(
+                    "This TCX controller has no confirmed FRLY/WF waterfall feature"
+                )
+            feature_key, feature_state = feature
+            current = _coerce_bool(feature_state.get("st"))
+            if current is enabled:
+                return
+
+            ws = self._ws
+            if ws is None or ws.closed or not self.websocket_connected:
+                raise TCXConnectionError(
+                    "TCX WebSocket is not connected; waterfall command was not sent"
+                )
+            if not self.device_id or self.user_id is None:
+                raise TCXConnectionError(
+                    "TCX device or user identity is unavailable; waterfall command was not sent"
+                )
+
+            message = build_set_state_message(
+                self.device_id,
+                self.user_id,
+                "fea",
+                {feature_key: {"st": int(enabled)}},
+            )
+            future: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+            self._pending_waterfall_state = (enabled, future)
+            self.control_command_count += 1
+            self.last_control_at = _utc_now_iso()
+            self.last_control_error = None
+
+            try:
+                await ws.send_json(message)
+                await asyncio.wait_for(future, timeout=CONTROL_CONFIRM_TIMEOUT)
+            except asyncio.TimeoutError as err:
+                message_text = (
+                    "TCX did not confirm the waterfall state within "
+                    f"{CONTROL_CONFIRM_TIMEOUT} seconds"
+                )
+                self.control_failure_count += 1
+                self.last_control_error = message_text
+                raise TCXConnectionError(message_text) from err
+            except asyncio.CancelledError:
+                raise
+            except TCXError as err:
+                self.control_failure_count += 1
+                self.last_control_error = str(err)
+                raise
+            except (aiohttp.ClientError, ConnectionError, RuntimeError) as err:
+                message_text = f"Unable to send TCX waterfall command: {err}"
+                self.control_failure_count += 1
+                self.last_control_error = message_text
+                raise TCXConnectionError(message_text) from err
+            else:
+                self.control_success_count += 1
+                self.last_control_error = None
+            finally:
+                if self._pending_waterfall_state is not None:
+                    if self._pending_waterfall_state[1] is future:
+                        self._pending_waterfall_state = None
 
     def _record_ws_structure(self, data: dict[str, Any]) -> None:
         structure = _ws_structure(data)
@@ -1037,6 +1219,7 @@ class TCXClient:
                         if reported is not None:
                             self.ws_reported_messages_received += 1
                             _deep_merge(self.reported, reported)
+                            self._resolve_pending_waterfall_state()
                             self.last_ws_reported_monotonic = now
                             self.last_ws_state_at = self.last_ws_message_at
                             failures = 0
@@ -1074,6 +1257,9 @@ class TCXClient:
                     bootstrap_task.cancel()
                     await asyncio.gather(bootstrap_task, return_exceptions=True)
                 self.websocket_connected = False
+                self._fail_pending_control(
+                    "TCX WebSocket closed before the equipment confirmed the command"
+                )
                 if self._ws is not None and not self._ws.closed:
                     await self._ws.close()
                 self._ws = None
