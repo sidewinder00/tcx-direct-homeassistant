@@ -104,6 +104,40 @@ Observed `currClr = 3` matched the legacy TCX client display name **Romance**. T
 
 Observed `pool.st` desired/reported changes correspond with Pool Filtration mode changes. These desired-state echoes are retained in sanitized diagnostics for future control-protocol work.
 
+### Waterfall feature relay: `fcr0`
+
+The tested controller reports its waterfall as a feature relay with the
+following identifying fields:
+
+```json
+{
+  "fr": "Waterfall",
+  "et": "FRLY",
+  "app": "WF",
+  "jv": "jva1",
+  "ar": 3,
+  "st": 0
+}
+```
+
+`st` is the live on/off state. Captured official-client traffic changed only
+that field for normal operation:
+
+```json
+{"fcr0": {"st": 1}}
+{"fcr0": {"st": 0}}
+```
+
+The controller reported the matching state within approximately one second.
+Pump action and valve positioning are coordinated by the controller; preset
+index `ar: 3` matches the configured Waterfall pump speed of 2850 RPM on the
+tested system.
+
+TCX Direct sends this desired state through the Zodiac WebSocket `setState`
+action in the `fea` namespace. A control call is successful only after the
+matching `fcr0.st` value is received in reported state. The object key is
+discovered from the `FRLY`/`WF` type pair rather than assumed to be `fcr0`.
+
 ## Device/configuration fields
 
 Observed controller-level fields include:

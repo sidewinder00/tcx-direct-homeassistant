@@ -9,7 +9,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
-from .api import TCXClient, normalize_tcx_state
+from .api import TCXClient, merge_normalized_state, normalize_tcx_state
 from .const import CACHE_VERSION, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
@@ -46,6 +46,12 @@ class TCXCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # REST shadow or WebSocket delta augments known state rather than
             # forcing entities back to Unknown.
             self.client.reported = deepcopy(raw_reported)
+            # Re-apply current normalization rules to stored state so an
+            # upgrade immediately clears derived values that older versions
+            # could retain after equipment turned off.
+            self.normalized = merge_normalized_state(
+                self.normalized, normalize_tcx_state(self.raw_reported)
+            )
         self.last_successful_update = saved.get("last_successful_update")
         self.source = "cache"
         self.using_cached_data = True
@@ -55,14 +61,7 @@ class TCXCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def async_handle_state(self, reported: dict[str, Any], source: str) -> None:
         self.raw_reported = deepcopy(reported)
         parsed = normalize_tcx_state(reported)
-        for key, value in parsed.items():
-            if value is not None:
-                self.normalized[key] = value
-        if parsed.get("light") is False:
-            # The controller retains saved/commanded colors while off. Remove
-            # both derived current-color values instead of keeping stale state.
-            self.normalized.pop("light_color", None)
-            self.normalized.pop("light_color_name", None)
+        self.normalized = merge_normalized_state(self.normalized, parsed)
         self.last_successful_update = datetime.now(timezone.utc).isoformat()
         self.source = source
         self.using_cached_data = False

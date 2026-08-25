@@ -7,6 +7,7 @@ ENTITY_FILES = (
     Path("custom_components/tcx_direct/sensor.py"),
     Path("custom_components/tcx_direct/binary_sensor.py"),
     Path("custom_components/tcx_direct/button.py"),
+    Path("custom_components/tcx_direct/switch.py"),
 )
 
 

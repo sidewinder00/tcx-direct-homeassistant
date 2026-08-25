@@ -2,7 +2,7 @@ from __future__ import annotations
 
 DOMAIN = "tcx_direct"
 NAME = "Jandy TCX Direct"
-VERSION = "0.1.8"
+VERSION = "0.1.9"
 
 API_KEY = "EOOEMOW4YR6QNB07"
 ZODIAC_API = "https://prod.zodiac-io.com"
@@ -13,7 +13,7 @@ CONF_DEVICE_ID = "device_id"
 CONF_DEVICE_NAME = "device_name"
 CONF_DEVICE_TYPE = "device_type"
 
-PLATFORMS = ["sensor", "binary_sensor", "button"]
+PLATFORMS = ["sensor", "binary_sensor", "button", "switch"]
 
 SHADOW_INTERVAL = 60
 TOKEN_REFRESH_MARGIN = 300
@@ -23,4 +23,5 @@ WEBSOCKET_STALE_SECONDS = 600
 RECENT_WS_STRUCTURES = 20
 BOOTSTRAP_SUBSCRIBE_INTERVAL = 3
 BOOTSTRAP_SUBSCRIBE_ATTEMPTS = 4
+CONTROL_CONFIRM_TIMEOUT = 15
 CACHE_VERSION = 1

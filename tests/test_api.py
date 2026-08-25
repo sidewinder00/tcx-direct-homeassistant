@@ -43,7 +43,7 @@ def test_normalize_observed_tcx_state() -> None:
             "spdList": [{"name": "Pool Filtration", "speed": 1100}],
         },
         "auxz0": {"st": 1, "currClr": 3},
-        "fcr0": {"fr": "Waterfall", "app": "WF", "st": 0},
+        "fcr0": {"fr": "Waterfall", "et": "FRLY", "app": "WF", "st": 0},
     }
 
     normalized = api.normalize_tcx_state(reported)
@@ -57,6 +57,7 @@ def test_normalize_observed_tcx_state() -> None:
     assert normalized["light"] is True
     assert normalized["light_color"] == 3
     assert normalized["light_color_name"] == "Romance"
+    assert normalized["waterfall"] is False
     assert normalized["swc_level"] is None
 
 
@@ -75,6 +76,99 @@ def test_light_color_clears_when_light_is_off() -> None:
     assert normalized["light"] is False
     assert normalized["light_color"] is None
     assert normalized["light_color_name"] is None
+
+
+def test_derived_values_clear_when_equipment_turns_off() -> None:
+    current = {
+        "light": True,
+        "light_color": 3,
+        "light_color_name": "Romance",
+        "pump": True,
+        "pump_preset": "Waterfall",
+    }
+
+    merged = api.merge_normalized_state(
+        current,
+        {
+            "light": False,
+            "light_color": None,
+            "light_color_name": None,
+            "pump": False,
+            "pump_preset": None,
+        },
+    )
+
+    assert merged["light"] is False
+    assert "light_color" not in merged
+    assert "light_color_name" not in merged
+    assert merged["pump"] is False
+    assert "pump_preset" not in merged
+
+
+def test_waterfall_requires_confirmed_feature_type() -> None:
+    assert api.normalize_tcx_state(
+        {"fcr0": {"fr": "Waterfall", "et": "FRLY", "app": "WF", "st": 1}}
+    )["waterfall"] is True
+    assert api.normalize_tcx_state(
+        {"fcr0": {"fr": "Waterfall", "et": "OTHER", "app": "WF", "st": 1}}
+    )["waterfall"] is None
+    assert api.normalize_tcx_state(
+        {"fcr0": {"fr": "Waterfall", "et": "FRLY", "app": "SWC", "st": 1}}
+    )["waterfall"] is None
+
+
+def test_build_set_state_message_matches_zodiac_protocol() -> None:
+    assert api.build_set_state_message(
+        "device",
+        "12345",
+        "fea",
+        {"fcr0": {"st": 1}},
+        client_token="12345|test-token",
+    ) == {
+        "action": "setState",
+        "version": 1,
+        "namespace": "fea",
+        "payload": {
+            "state": {"desired": {"fcr0": {"st": 1}}},
+            "clientToken": "12345|test-token",
+        },
+        "service": "StateController",
+        "target": "device",
+    }
+
+
+def test_waterfall_control_waits_for_reported_confirmation() -> None:
+    client = make_client()
+    client.user_id = "12345"
+    client.websocket_connected = True
+    client.reported = {
+        "fcr0": {"fr": "Waterfall", "et": "FRLY", "app": "WF", "st": 0}
+    }
+
+    class FakeWebSocket:
+        closed = False
+
+        def __init__(self) -> None:
+            self.messages: list[dict[str, object]] = []
+
+        async def send_json(self, message: dict[str, object]) -> None:
+            self.messages.append(message)
+            client.reported["fcr0"]["st"] = 1
+            client._resolve_pending_waterfall_state()
+
+    websocket = FakeWebSocket()
+    client._ws = websocket  # type: ignore[assignment]
+
+    asyncio.run(client.async_set_waterfall(True))
+
+    assert websocket.messages[0]["namespace"] == "fea"
+    assert websocket.messages[0]["payload"]["state"]["desired"] == {
+        "fcr0": {"st": 1}
+    }
+    assert client.control_command_count == 1
+    assert client.control_success_count == 1
+    assert client.control_failure_count == 0
+    assert client.last_control_error is None
 
 
 def test_new_socket_does_not_inherit_previous_freshness(monkeypatch: pytest.MonkeyPatch) -> None:
