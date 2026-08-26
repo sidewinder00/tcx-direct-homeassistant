@@ -145,6 +145,11 @@ validated.
 
 Observed `pool.st` desired/reported changes correspond with Pool Filtration mode changes. v0.1.12 identifies this object by the `V_POS`/`POOL_M` type pair and uses it for the Pump Power control. The command is considered successful only after the requested `pool.st` value is reported back. Subsequent live testing confirmed both the command path and reported-state confirmation on the tested controller.
 
+The tested cloud stream can take approximately 25 seconds to publish the
+reported `pool.st` confirmation even though the pump starts immediately.
+Beginning with v0.2.1, Pump Power therefore uses a dedicated 45-second
+confirmation window. Other equipment controls retain the 15-second window.
+
 ### Waterfall feature relay: `fcr0`
 
 The tested controller reports its waterfall as a feature relay with the

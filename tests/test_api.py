@@ -5,6 +5,10 @@ import asyncio
 import pytest
 
 from custom_components.tcx_direct import api
+from custom_components.tcx_direct.const import (
+    CONTROL_CONFIRM_TIMEOUT,
+    PUMP_POWER_CONFIRM_TIMEOUT,
+)
 
 
 def make_client() -> api.TCXClient:
@@ -397,7 +401,7 @@ def test_waterfall_with_speed_confirms_relay_then_sets_manual_rpm() -> None:
     assert client.control_success_count == 2
 
 
-def test_pump_power_control_targets_confirmed_pool_mode() -> None:
+def test_pump_power_control_uses_extended_confirmation_timeout(monkeypatch) -> None:
     client = make_client()
     client.user_id = "12345"
     client.websocket_connected = True
@@ -421,11 +425,22 @@ def test_pump_power_control_targets_confirmed_pool_mode() -> None:
     websocket = FakeWebSocket()
     client._ws = websocket  # type: ignore[assignment]
 
+    captured_timeouts: list[float | None] = []
+    original_wait_for = asyncio.wait_for
+
+    async def capture_wait_for(awaitable, timeout=None):
+        captured_timeouts.append(timeout)
+        return await original_wait_for(awaitable, timeout=timeout)
+
+    monkeypatch.setattr(asyncio, "wait_for", capture_wait_for)
+
     asyncio.run(client.async_set_pump_power(True))
 
     assert websocket.messages[0]["namespace"] == "tcx"
     assert websocket.messages[0]["payload"]["state"]["desired"] == {"pool": {"st": 1}}
     assert client.control_success_count == 1
+    assert captured_timeouts == [PUMP_POWER_CONFIRM_TIMEOUT]
+    assert PUMP_POWER_CONFIRM_TIMEOUT > CONTROL_CONFIRM_TIMEOUT
 
 
 def test_pool_light_control_targets_confirmed_light_and_waits_for_report() -> None:
