@@ -23,6 +23,9 @@ jobs:
       - name: Install validation dependencies
         run: python -m pip install --disable-pip-version-check aiohttp pytest ruff
 
+      - name: Check formatting
+        run: ruff format --check custom_components/tcx_direct tests
+
       - name: Lint integration and tests
         run: ruff check custom_components/tcx_direct tests
 
@@ -39,14 +42,17 @@ jobs:
           python -m json.tool custom_components/tcx_direct/strings.json >/dev/null
           python -m json.tool custom_components/tcx_direct/translations/en.json >/dev/null
 
-      - name: Verify version consistency
+      - name: Verify release metadata consistency
         run: |
           python - <<'PY'
           import ast
           import json
+          import re
           from pathlib import Path
 
           manifest = json.loads(Path("custom_components/tcx_direct/manifest.json").read_text())
+          strings = json.loads(Path("custom_components/tcx_direct/strings.json").read_text())
+          english = json.loads(Path("custom_components/tcx_direct/translations/en.json").read_text())
           tree = ast.parse(Path("custom_components/tcx_direct/const.py").read_text())
           const_version = None
           for node in tree.body:
@@ -54,9 +60,37 @@ jobs:
                   for target in node.targets:
                       if isinstance(target, ast.Name) and target.id == "VERSION":
                           const_version = ast.literal_eval(node.value)
-          if const_version != manifest.get("version"):
+          readme_match = re.search(
+              r"^\*\*v(\d+\.\d+\.\d+)\*\*$",
+              Path("README.md").read_text(),
+              re.MULTILINE,
+          )
+          changelog_match = re.search(
+              r"^## \[(\d+\.\d+\.\d+)\]",
+              Path("CHANGELOG.md").read_text(),
+              re.MULTILINE,
+          )
+          versions = {
+              "const.py": const_version,
+              "manifest.json": manifest.get("version"),
+              "README.md": readme_match.group(1) if readme_match else None,
+              "CHANGELOG.md": changelog_match.group(1) if changelog_match else None,
+          }
+          if len(set(versions.values())) != 1 or None in versions.values():
               raise SystemExit(
-                  f"Version mismatch: const.py={const_version!r}, manifest={manifest.get('version')!r}"
+                  "Release version mismatch: "
+                  + ", ".join(f"{path}={version!r}" for path, version in versions.items())
               )
-          print(f"TCX Direct version {const_version} is consistent")
+          if strings != english:
+              raise SystemExit("strings.json and translations/en.json do not match")
+          print(f"TCX Direct version {const_version} and English translations are consistent")
           PY
+
+  hassfest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Validate Home Assistant metadata
+        uses: home-assistant/actions/hassfest@master
