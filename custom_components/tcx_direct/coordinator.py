@@ -27,9 +27,7 @@ class TCXCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def __init__(self, hass: HomeAssistant, client: TCXClient, entry_id: str) -> None:
         super().__init__(hass, _LOGGER, name=DOMAIN)
         self.client = client
-        self.store: Store[dict[str, Any]] = Store(
-            hass, CACHE_VERSION, f"{DOMAIN}.{entry_id}"
-        )
+        self.store: Store[dict[str, Any]] = Store(hass, CACHE_VERSION, f"{DOMAIN}.{entry_id}")
         self.raw_reported: dict[str, Any] = {}
         self.normalized: dict[str, Any] = {}
         self.last_successful_update: str | None = None
@@ -78,9 +76,7 @@ class TCXCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.async_set_updated_data(self._build_data())
         self.store.async_delay_save(self._cache_data, 5)
 
-    def _filter_transient_pump_zero(
-        self, parsed: dict[str, Any], reported: dict[str, Any]
-    ) -> None:
+    def _filter_transient_pump_zero(self, parsed: dict[str, Any], reported: dict[str, Any]) -> None:
         """Hold the last RPM while the controller briefly resets its motor state."""
         if not should_suppress_transient_pump_zero(
             self.normalized.get("pump_rpm"), parsed, reported

@@ -58,10 +58,6 @@ def sanitize_diagnostics(value: Any) -> Any:
 def safe_structure_key(value: Any) -> str:
     """Hide identifier-shaped dynamic JSON keys in schema diagnostics."""
     text = str(value)
-    if (
-        _HEX_IDENTIFIER.fullmatch(text)
-        or _UUID_IDENTIFIER.fullmatch(text)
-        or "@" in text
-    ):
+    if _HEX_IDENTIFIER.fullmatch(text) or _UUID_IDENTIFIER.fullmatch(text) or "@" in text:
         return "<redacted-key>"
     return text

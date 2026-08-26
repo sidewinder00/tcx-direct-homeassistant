@@ -31,9 +31,7 @@ class TCXDirectConfigFlow(ConfigFlow, domain=DOMAIN):
         self._devices: list[TCXDevice] = []
         self._reauth_entry = None
 
-    async def async_step_user(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
+    async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         errors: dict[str, str] = {}
         if user_input is not None:
             self._username = str(user_input[CONF_USERNAME]).strip()
@@ -67,9 +65,7 @@ class TCXDirectConfigFlow(ConfigFlow, domain=DOMAIN):
         )
         return self.async_show_form(step_id="user", data_schema=schema, errors=errors)
 
-    async def async_step_device(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
+    async def async_step_device(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if user_input is not None:
             serial = str(user_input[CONF_DEVICE_ID])
             device = next((d for d in self._devices if d.serial == serial), None)
@@ -77,8 +73,7 @@ class TCXDirectConfigFlow(ConfigFlow, domain=DOMAIN):
                 return await self._create_for_device(device)
 
         options = [
-            {"value": dev.serial, "label": f"{dev.name} ({dev.serial})"}
-            for dev in self._devices
+            {"value": dev.serial, "label": f"{dev.name} ({dev.serial})"} for dev in self._devices
         ]
         schema = vol.Schema(
             {
@@ -113,12 +108,8 @@ class TCXDirectConfigFlow(ConfigFlow, domain=DOMAIN):
             },
         )
 
-    async def async_step_reauth(
-        self, entry_data: dict[str, Any]
-    ) -> ConfigFlowResult:
-        self._reauth_entry = self.hass.config_entries.async_get_entry(
-            self.context["entry_id"]
-        )
+    async def async_step_reauth(self, entry_data: dict[str, Any]) -> ConfigFlowResult:
+        self._reauth_entry = self.hass.config_entries.async_get_entry(self.context["entry_id"])
         return await self.async_step_reauth_confirm()
 
     async def async_step_reauth_confirm(
@@ -145,12 +136,8 @@ class TCXDirectConfigFlow(ConfigFlow, domain=DOMAIN):
                         CONF_USERNAME: username,
                         CONF_PASSWORD: password,
                     }
-                    self.hass.config_entries.async_update_entry(
-                        self._reauth_entry, data=new_data
-                    )
-                    await self.hass.config_entries.async_reload(
-                        self._reauth_entry.entry_id
-                    )
+                    self.hass.config_entries.async_update_entry(self._reauth_entry, data=new_data)
+                    await self.hass.config_entries.async_reload(self._reauth_entry.entry_id)
                     return self.async_abort(reason="reauth_successful")
 
         schema = vol.Schema(
@@ -164,6 +151,4 @@ class TCXDirectConfigFlow(ConfigFlow, domain=DOMAIN):
                 ),
             }
         )
-        return self.async_show_form(
-            step_id="reauth_confirm", data_schema=schema, errors=errors
-        )
+        return self.async_show_form(step_id="reauth_confirm", data_schema=schema, errors=errors)
