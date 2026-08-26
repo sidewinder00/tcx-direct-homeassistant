@@ -26,10 +26,7 @@ def test_sensitive_tcx_identifiers_are_redacted() -> None:
 
 def test_identifier_shaped_structure_keys_are_hidden() -> None:
     assert safe_structure_key("F4CE36BBBF99AF99") == "<redacted-key>"
-    assert (
-        safe_structure_key("550e8400-e29b-41d4-a716-446655440000")
-        == "<redacted-key>"
-    )
+    assert safe_structure_key("550e8400-e29b-41d4-a716-446655440000") == "<redacted-key>"
     assert safe_structure_key("ecm0") == "ecm0"
 
 
