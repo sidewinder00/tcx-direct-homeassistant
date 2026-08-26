@@ -181,6 +181,45 @@ def test_stopped_pump_speed_control_value_stays_within_writable_range() -> None:
     assert normalized["pump_speed_setpoint"] == 1100
 
 
+def test_transient_zero_is_suppressible_while_filtration_is_requested() -> None:
+    reported = {
+        "ecm0": {
+            "st": 0,
+            "cmdSpd": 0,
+            "reqSpd": 2725,
+            "manSpd": 2725,
+        },
+        "filt0": {
+            "et": "F_CTRL",
+            "app": "FILT",
+            "st": 1,
+            "manSpd": 2725,
+        },
+        "pool": {"et": "V_POS", "app": "POOL_M", "st": 1},
+    }
+    parsed = api.normalize_tcx_state(reported)
+
+    assert parsed["pump_rpm"] == 0
+    assert api.should_suppress_transient_pump_zero(2650, parsed, reported) is True
+
+
+def test_actual_pump_off_zero_is_not_suppressed() -> None:
+    reported = {
+        "ecm0": {"st": 0, "cmdSpd": 0, "reqSpd": 0, "manSpd": 1100},
+        "filt0": {
+            "et": "F_CTRL",
+            "app": "FILT",
+            "st": 0,
+            "manSpd": 1100,
+        },
+        "pool": {"et": "V_POS", "app": "POOL_M", "st": 0},
+        "fcr0": {"fr": "Waterfall", "et": "FRLY", "app": "WF", "st": 0},
+    }
+    parsed = api.normalize_tcx_state(reported)
+
+    assert api.should_suppress_transient_pump_zero(2650, parsed, reported) is False
+
+
 def test_light_color_clears_when_light_is_off() -> None:
     normalized = api.normalize_tcx_state(
         {
