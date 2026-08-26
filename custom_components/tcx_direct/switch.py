@@ -137,9 +137,7 @@ class TCXWaterfallSwitch(TCXEntity, SwitchEntity):
         try:
             client = self.entry.runtime_data.client
             if enabled:
-                await client.async_set_waterfall_with_speed(
-                    configured_waterfall_rpm(self.entry)
-                )
+                await client.async_set_waterfall_with_speed(configured_waterfall_rpm(self.entry))
             else:
                 await client.async_set_waterfall(False)
         except TCXError as err:
