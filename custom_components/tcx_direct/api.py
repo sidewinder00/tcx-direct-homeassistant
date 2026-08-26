@@ -417,9 +417,7 @@ def build_set_state_message(
     }
 
 
-def merge_normalized_state(
-    current: dict[str, Any], parsed: dict[str, Any]
-) -> dict[str, Any]:
+def merge_normalized_state(current: dict[str, Any], parsed: dict[str, Any]) -> dict[str, Any]:
     """Merge a sparse normalized update while clearing invalid derived values."""
     merged = deepcopy(current)
     for key, value in parsed.items():
@@ -499,9 +497,7 @@ def normalize_tcx_state(reported: dict[str, Any]) -> dict[str, Any]:
     if pump_speed_setpoint is None:
         pump_speed_setpoint = requested_rpm
     pool_mode = _find_pool_mode(reported)
-    pump_power_setpoint = (
-        _coerce_bool(pool_mode[1].get("st")) if pool_mode is not None else None
-    )
+    pump_power_setpoint = _coerce_bool(pool_mode[1].get("st")) if pool_mode is not None else None
     pump_power_control_supported = pool_mode is not None
     pump_speed_control_supported = (
         _find_filter_controller(reported) is not None
@@ -604,9 +600,7 @@ def normalize_tcx_state(reported: dict[str, Any]) -> dict[str, Any]:
     # differently.
     waterfall_feature = _find_waterfall_feature(reported)
     waterfall_state = (
-        _coerce_bool(waterfall_feature[1].get("st"))
-        if waterfall_feature is not None
-        else None
+        _coerce_bool(waterfall_feature[1].get("st")) if waterfall_feature is not None else None
     )
 
     # ---- Useful diagnostics/configuration ---------------------------------
@@ -714,9 +708,7 @@ class TCXClient:
         self.last_ws_namespace: str | None = None
         self.last_ws_target: str | None = None
         self.last_ws_payload: dict[str, Any] | None = None
-        self._recent_ws_structures: deque[dict[str, Any]] = deque(
-            maxlen=RECENT_WS_STRUCTURES
-        )
+        self._recent_ws_structures: deque[dict[str, Any]] = deque(maxlen=RECENT_WS_STRUCTURES)
         self._ws_structure_counts: dict[str, int] = {}
         self._recent_desired_payloads: deque[dict[str, Any]] = deque(maxlen=20)
 
@@ -770,9 +762,7 @@ class TCXClient:
                 if response.status in (401, 403):
                     raise TCXAuthError("Invalid iAquaLink username or password")
                 if response.status >= 400:
-                    raise TCXConnectionError(
-                        f"Login failed with HTTP {response.status}"
-                    )
+                    raise TCXConnectionError(f"Login failed with HTTP {response.status}")
                 data = await response.json(content_type=None)
         except TCXError:
             raise
@@ -803,7 +793,7 @@ class TCXClient:
             self.refresh_token = None
         try:
             expires = max(600, int(expires_in))
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             expires = 3600
         self._token_expires_at = time.monotonic() + expires
 
@@ -823,7 +813,7 @@ class TCXClient:
                     await self._async_full_login()
                     return
                 data = await response.json(content_type=None)
-        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
+        except aiohttp.ClientError, asyncio.TimeoutError, ValueError:
             await self._async_full_login()
             return
         self._apply_auth(data, keep_refresh=True)
@@ -855,9 +845,7 @@ class TCXClient:
                     self.id_token = None
                     raise TCXAuthError("iAquaLink session expired")
                 if response.status >= 400:
-                    raise TCXConnectionError(
-                        f"Device discovery failed with HTTP {response.status}"
-                    )
+                    raise TCXConnectionError(f"Device discovery failed with HTTP {response.status}")
                 data = await response.json(content_type=None)
         except TCXError:
             raise
@@ -994,9 +982,7 @@ class TCXClient:
     async def async_force_reconnect(self, reason: str = "manual") -> None:
         """Force the current subscription to be rebuilt and record why."""
         self.last_reconnect_reason = reason
-        self.reconnect_reason_counts[reason] = (
-            self.reconnect_reason_counts.get(reason, 0) + 1
-        )
+        self.reconnect_reason_counts[reason] = self.reconnect_reason_counts.get(reason, 0) + 1
         if reason == "manual":
             self.manual_reconnect_count += 1
         elif reason.startswith("watchdog"):
@@ -1059,8 +1045,7 @@ class TCXClient:
             await asyncio.wait_for(future, timeout=CONTROL_CONFIRM_TIMEOUT)
         except asyncio.TimeoutError as err:
             message_text = (
-                f"TCX did not confirm {description} within "
-                f"{CONTROL_CONFIRM_TIMEOUT} seconds"
+                f"TCX did not confirm {description} within {CONTROL_CONFIRM_TIMEOUT} seconds"
             )
             self.control_failure_count += 1
             self.control_failure_counts[description] = (
@@ -1205,8 +1190,7 @@ class TCXClient:
                 "pump speed",
                 lambda reported: (
                     (confirmed := _find_filter_controller(reported)) is not None
-                    and (actual := _coerce_number(confirmed[1].get("manSpd")))
-                    is not None
+                    and (actual := _coerce_number(confirmed[1].get("manSpd"))) is not None
                     and round(actual) == requested
                 ),
             )
@@ -1281,10 +1265,7 @@ class TCXClient:
         """Return whether actual WebSocket reported-state traffic is recent."""
         if not self.websocket_connected or self.last_ws_reported_monotonic is None:
             return False
-        return (
-            time.monotonic() - self.last_ws_reported_monotonic
-            <= WEBSOCKET_STALE_SECONDS
-        )
+        return time.monotonic() - self.last_ws_reported_monotonic <= WEBSOCKET_STALE_SECONDS
 
     def _mark_websocket_opened(self) -> None:
         """Initialize freshness state for a newly opened socket generation."""
@@ -1338,9 +1319,7 @@ class TCXClient:
         await self._send_authorization_subscribe(ws)
         return ws
 
-    async def _send_authorization_subscribe(
-        self, ws: aiohttp.ClientWebSocketResponse
-    ) -> None:
+    async def _send_authorization_subscribe(self, ws: aiohttp.ClientWebSocketResponse) -> None:
         """Subscribe to the TCX device and request its current namespace snapshot.
 
         Zodiac normally answers this subscription with an Authorization payload
@@ -1366,9 +1345,7 @@ class TCXClient:
         await ws.send_json(subscribe)
         self.authorization_subscribe_count += 1
 
-    async def _bootstrap_resubscribe(
-        self, ws: aiohttp.ClientWebSocketResponse
-    ) -> None:
+    async def _bootstrap_resubscribe(self, ws: aiohttp.ClientWebSocketResponse) -> None:
         """Retry the read-only Authorization subscription until a snapshot arrives."""
         # The first subscription was sent by _open_websocket. These are only
         # retries, and do not change equipment state.
@@ -1389,7 +1366,7 @@ class TCXClient:
                 _LOGGER.debug(
                     "TCX startup snapshot not received yet; re-sent Authorization subscription"
                 )
-            except (aiohttp.ClientError, ConnectionError, RuntimeError):
+            except aiohttp.ClientError, ConnectionError, RuntimeError:
                 return
 
     async def _socket_supervisor(self) -> None:
@@ -1569,9 +1546,7 @@ class TCXClient:
                     self.shadow_poll_interval * 2,
                     err.retry_after or 0,
                 )
-                self.shadow_poll_interval = min(
-                    SHADOW_RATE_LIMIT_MAX_INTERVAL, next_interval
-                )
+                self.shadow_poll_interval = min(SHADOW_RATE_LIMIT_MAX_INTERVAL, next_interval)
                 if not self.websocket_connected:
                     self.cloud_reachable = False
                 await self._notify_status()
@@ -1615,7 +1590,7 @@ class TCXClient:
             )
         except asyncio.CancelledError:
             raise
-        except (asyncio.TimeoutError, aiohttp.ClientError, ConnectionError, RuntimeError):
+        except asyncio.TimeoutError, aiohttp.ClientError, ConnectionError, RuntimeError:
             self.watchdog_resubscribe_failure_count += 1
             return False
         self.watchdog_resubscribe_success_count += 1
@@ -1653,21 +1628,15 @@ class TCXClient:
             # message has arrived for the stale window, first refresh the
             # Authorization subscription on the existing socket. Reconnect
             # only if Zodiac does not answer that read-only refresh.
-            if (
-                (reported_age is None and age >= WEBSOCKET_STALE_SECONDS)
-                or (
-                    reported_age is not None
-                    and reported_age >= WEBSOCKET_STALE_SECONDS
-                )
+            if (reported_age is None and age >= WEBSOCKET_STALE_SECONDS) or (
+                reported_age is not None and reported_age >= WEBSOCKET_STALE_SECONDS
             ):
                 _LOGGER.info(
                     "TCX WebSocket has produced no reported state for %s seconds; refreshing subscription",
                     f"{age:.0f}" if reported_age is None else f"{reported_age:.0f}",
                 )
                 if not await self._async_refresh_stale_subscription():
-                    _LOGGER.warning(
-                        "TCX subscription refresh was not confirmed; reconnecting"
-                    )
+                    _LOGGER.warning("TCX subscription refresh was not confirmed; reconnecting")
                     await self.async_force_reconnect("watchdog_stale_stream")
                 continue
 
