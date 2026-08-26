@@ -2,6 +2,21 @@
 
 All notable changes to Jandy TCX Direct are documented here.
 
+## [0.2.0] - 2026-08-25
+
+### Release highlights
+- Consolidate the live-tested telemetry, connection supervision, diagnostics, and confirmation-gated equipment controls developed throughout the 0.1.x series.
+- Include separate read-only status entities and writable controls for pump power, manual pump speed, pool-light power, Waterfall state, and Waterfall RPM.
+
+### Fixed
+- Preserve the active motor `cmdSpd` during priming and suppress brief contradictory 0 RPM transitions without delaying genuine pump-off reporting.
+- Keep the writable Pump Manual Speed tied to `filt0.manSpd` while controller presets, freeze protection, Waterfall, and other runtime behavior remain visible through the live RPM and preset sensors.
+- Retain last-known state across cloud interruptions and recover quiet WebSocket subscriptions without unnecessary reconnect churn.
+
+### Changed
+- Require Home Assistant 2026.8.0 or newer and align development validation with Python 3.14.
+- Enforce Ruff formatting, run Home Assistant's Hassfest validator, and verify version consistency across the integration manifest, constants, README, and changelog in CI.
+
 ## [0.1.17] - 2026-08-25
 
 ### Fixed
