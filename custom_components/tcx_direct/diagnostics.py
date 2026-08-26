@@ -86,9 +86,7 @@ async def async_get_config_entry_diagnostics(
             "last_authorization_snapshot_at": client.last_authorization_snapshot_at,
             "last_reconnect_reason": client.last_reconnect_reason,
             "recent_unique_payload_structures": client.recent_ws_structures,
-            "recent_desired_payloads": sanitize_diagnostics(
-                client.recent_desired_payloads
-            ),
+            "recent_desired_payloads": sanitize_diagnostics(client.recent_desired_payloads),
             "last_payload": sanitize_diagnostics(client.last_ws_payload),
         },
         "shadow": {
