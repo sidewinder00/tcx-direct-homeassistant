@@ -14,11 +14,7 @@ def make_client() -> api.TCXClient:
 def test_collect_reported_merges_all_namespaces() -> None:
     payload = {
         "main": {"state": {"reported": {"water": {"value": 317}}}},
-        "ecm": {
-            "state": {
-                "reported": {"ecm0": {"st": 1, "reqSpd": 2600}}
-            }
-        },
+        "ecm": {"state": {"reported": {"ecm0": {"st": 1, "reqSpd": 2600}}}},
         "filt": {"state": {"reported": {"filt0": {"manSpd": 1100}}}},
     }
 
@@ -240,15 +236,16 @@ def test_light_color_clears_when_light_is_off() -> None:
 
 
 def test_pool_light_requires_confirmed_equipment_type() -> None:
-    assert api.normalize_tcx_state(
-        {"auxz0": {"et": "JL", "app": "POOL_LT", "st": 1}}
-    )["light"] is True
-    assert api.normalize_tcx_state(
-        {"auxz0": {"et": "OTHER", "app": "POOL_LT", "st": 1}}
-    )["light"] is None
-    assert api.normalize_tcx_state(
-        {"auxz0": {"et": "JL", "app": "OTHER", "st": 1}}
-    )["light"] is None
+    assert (
+        api.normalize_tcx_state({"auxz0": {"et": "JL", "app": "POOL_LT", "st": 1}})["light"] is True
+    )
+    assert (
+        api.normalize_tcx_state({"auxz0": {"et": "OTHER", "app": "POOL_LT", "st": 1}})["light"]
+        is None
+    )
+    assert (
+        api.normalize_tcx_state({"auxz0": {"et": "JL", "app": "OTHER", "st": 1}})["light"] is None
+    )
 
 
 def test_derived_values_clear_when_equipment_turns_off() -> None:
@@ -279,15 +276,24 @@ def test_derived_values_clear_when_equipment_turns_off() -> None:
 
 
 def test_waterfall_requires_confirmed_feature_type() -> None:
-    assert api.normalize_tcx_state(
-        {"fcr0": {"fr": "Waterfall", "et": "FRLY", "app": "WF", "st": 1}}
-    )["waterfall"] is True
-    assert api.normalize_tcx_state(
-        {"fcr0": {"fr": "Waterfall", "et": "OTHER", "app": "WF", "st": 1}}
-    )["waterfall"] is None
-    assert api.normalize_tcx_state(
-        {"fcr0": {"fr": "Waterfall", "et": "FRLY", "app": "SWC", "st": 1}}
-    )["waterfall"] is None
+    assert (
+        api.normalize_tcx_state({"fcr0": {"fr": "Waterfall", "et": "FRLY", "app": "WF", "st": 1}})[
+            "waterfall"
+        ]
+        is True
+    )
+    assert (
+        api.normalize_tcx_state({"fcr0": {"fr": "Waterfall", "et": "OTHER", "app": "WF", "st": 1}})[
+            "waterfall"
+        ]
+        is None
+    )
+    assert (
+        api.normalize_tcx_state({"fcr0": {"fr": "Waterfall", "et": "FRLY", "app": "SWC", "st": 1}})[
+            "waterfall"
+        ]
+        is None
+    )
 
 
 def test_build_set_state_message_matches_zodiac_protocol() -> None:
@@ -314,9 +320,7 @@ def test_waterfall_control_waits_for_reported_confirmation() -> None:
     client = make_client()
     client.user_id = "12345"
     client.websocket_connected = True
-    client.reported = {
-        "fcr0": {"fr": "Waterfall", "et": "FRLY", "app": "WF", "st": 0}
-    }
+    client.reported = {"fcr0": {"fr": "Waterfall", "et": "FRLY", "app": "WF", "st": 0}}
 
     class FakeWebSocket:
         closed = False
@@ -335,9 +339,7 @@ def test_waterfall_control_waits_for_reported_confirmation() -> None:
     asyncio.run(client.async_set_waterfall(True))
 
     assert websocket.messages[0]["namespace"] == "tcx"
-    assert websocket.messages[0]["payload"]["state"]["desired"] == {
-        "fcr0": {"st": 1}
-    }
+    assert websocket.messages[0]["payload"]["state"]["desired"] == {"fcr0": {"st": 1}}
     assert client.control_command_count == 1
     assert client.control_success_count == 1
     assert client.control_failure_count == 0
@@ -385,9 +387,7 @@ def test_waterfall_with_speed_confirms_relay_then_sets_manual_rpm() -> None:
 
     asyncio.run(client.async_set_waterfall_with_speed(2850))
 
-    desired_frames = [
-        message["payload"]["state"]["desired"] for message in websocket.messages
-    ]
+    desired_frames = [message["payload"]["state"]["desired"] for message in websocket.messages]
     assert desired_frames == [
         {"fcr0": {"st": 1}},
         {"filt0": {"manSpd": 2850}},
@@ -424,9 +424,7 @@ def test_pump_power_control_targets_confirmed_pool_mode() -> None:
     asyncio.run(client.async_set_pump_power(True))
 
     assert websocket.messages[0]["namespace"] == "tcx"
-    assert websocket.messages[0]["payload"]["state"]["desired"] == {
-        "pool": {"st": 1}
-    }
+    assert websocket.messages[0]["payload"]["state"]["desired"] == {"pool": {"st": 1}}
     assert client.control_success_count == 1
 
 
@@ -461,9 +459,7 @@ def test_pool_light_control_targets_confirmed_light_and_waits_for_report() -> No
     asyncio.run(client.async_set_pool_light(True))
 
     assert websocket.messages[0]["namespace"] == "tcx"
-    assert websocket.messages[0]["payload"]["state"]["desired"] == {
-        "auxz4": {"st": 1}
-    }
+    assert websocket.messages[0]["payload"]["state"]["desired"] == {"auxz4": {"st": 1}}
     assert client.control_command_counts["pool light state"] == 1
     assert client.control_success_counts["pool light state"] == 1
 
@@ -501,9 +497,7 @@ def test_pump_speed_control_targets_filter_controller_and_enforces_limits() -> N
     asyncio.run(client.async_set_pump_speed(2250))
 
     assert websocket.messages[0]["namespace"] == "tcx"
-    assert websocket.messages[0]["payload"]["state"]["desired"] == {
-        "filt0": {"manSpd": 2250}
-    }
+    assert websocket.messages[0]["payload"]["state"]["desired"] == {"filt0": {"manSpd": 2250}}
     assert client.control_success_count == 1
 
     with pytest.raises(api.TCXControlUnsupported, match="between 600 and 3450"):
