@@ -9,7 +9,7 @@ TCX Direct connects Home Assistant directly to the iAquaLink/Zodiac cloud. It do
 
 ## Current version
 
-**v0.1.17**
+**v0.2.0**
 
 The integration prioritizes reliable telemetry and conservative equipment control. Native control is enabled only for TCX equipment whose state and write behavior have been captured and validated; other equipment remains read-only.
 
@@ -68,6 +68,8 @@ The integration is designed around the failure mode where an iAquaLink/TCX conne
 
 ## Installation
 
+Home Assistant 2026.8.0 or newer is required.
+
 ### Manual
 
 Copy:
@@ -112,4 +114,4 @@ The transport implementation was informed by public reverse-engineering work aro
 
 ## Validation
 
-Every push and pull request runs a lightweight validation workflow that compiles the integration, validates its JSON files, and confirms the version in `const.py` matches `manifest.json`.
+Every push and pull request runs a validation workflow that checks Ruff formatting and linting, runs the test suite, compiles the integration, validates its Home Assistant metadata, JSON files, and English translations, and confirms that the release version matches across `const.py`, `manifest.json`, README, and the changelog.
