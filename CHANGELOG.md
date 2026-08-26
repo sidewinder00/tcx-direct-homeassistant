@@ -2,6 +2,15 @@
 
 All notable changes to Jandy TCX Direct are documented here.
 
+## [0.1.17] - 2026-08-25
+
+### Fixed
+- Suppress the controller's brief 0 RPM transition after a manual-speed change while Pool Filtration or Waterfall still requests the pump.
+- Keep genuine pump-off transitions immediate and publish a persistent contradictory zero after a 90-second confirmation period.
+
+### Added
+- Add pump-zero suppression state and counters to diagnostics.
+
 ## [0.1.16] - 2026-08-25
 
 ### Added
