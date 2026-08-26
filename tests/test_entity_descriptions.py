@@ -25,8 +25,7 @@ def test_entity_categories_use_home_assistant_enum() -> None:
 
     assert len(categories) == 17
     assert all(
-        expression == "EntityCategory.DIAGNOSTIC"
-        for _path, _line, expression in categories
+        expression == "EntityCategory.DIAGNOSTIC" for _path, _line, expression in categories
     ), categories
 
 
