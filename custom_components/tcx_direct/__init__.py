@@ -63,9 +63,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: TCXConfigEntry) -> bool:
             await client.async_get_shadow()
             await coordinator.async_handle_state(client.reported, "shadow")
         except TCXShadowUnsupported as err:
-            _LOGGER.info(
-                "TCX REST shadow unavailable; starting WebSocket-only: %s", err
-            )
+            _LOGGER.info("TCX REST shadow unavailable; starting WebSocket-only: %s", err)
         except TCXAuthError as err:
             client.id_token = None
             _LOGGER.warning(
@@ -73,9 +71,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: TCXConfigEntry) -> bool:
                 err,
             )
         except TCXConnectionError as err:
-            _LOGGER.warning(
-                "TCX shadow read failed; continuing with WebSocket transport: %s", err
-            )
+            _LOGGER.warning("TCX shadow read failed; continuing with WebSocket transport: %s", err)
 
     entry.runtime_data = TCXRuntimeData(client=client, coordinator=coordinator)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
