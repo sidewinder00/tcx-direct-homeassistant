@@ -88,6 +88,13 @@ eventual speed. Preset matching therefore uses `reqSpd` independently. If the
 pump state is explicitly off, the RPM entity reports `0` rather than a retained
 setpoint.
 
+Starting in v0.1.17, a transition filter holds the last valid nonzero RPM for
+up to 90 seconds when `ecm0` briefly reports a stopped motor while Pool
+Filtration, `filt0`, or Waterfall still requests operation. A new nonzero
+`cmdSpd` replaces the held value immediately. A genuine pump-off state is not
+delayed, and a contradictory zero that persists beyond the grace period is
+published so a real equipment problem is not hidden.
+
 ### Pool water temperature: `water`
 
 Observed payload shape:
@@ -136,7 +143,7 @@ validated.
 
 ### Pool mode/valve state: `pool`
 
-Observed `pool.st` desired/reported changes correspond with Pool Filtration mode changes. v0.1.12 identifies this object by the `V_POS`/`POOL_M` type pair and uses it for the Pump Power control. The command is considered successful only after the requested `pool.st` value is reported back. This write mapping remains provisional until live validation.
+Observed `pool.st` desired/reported changes correspond with Pool Filtration mode changes. v0.1.12 identifies this object by the `V_POS`/`POOL_M` type pair and uses it for the Pump Power control. The command is considered successful only after the requested `pool.st` value is reported back. Subsequent live testing confirmed both the command path and reported-state confirmation on the tested controller.
 
 ### Waterfall feature relay: `fcr0`
 
