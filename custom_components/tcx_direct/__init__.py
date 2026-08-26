@@ -85,4 +85,5 @@ async def async_setup_entry(hass: HomeAssistant, entry: TCXConfigEntry) -> bool:
 
 async def async_unload_entry(hass: HomeAssistant, entry: TCXConfigEntry) -> bool:
     await entry.runtime_data.client.async_stop()
+    await entry.runtime_data.coordinator.async_shutdown()
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)

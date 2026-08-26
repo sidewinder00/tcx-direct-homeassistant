@@ -434,6 +434,25 @@ def merge_normalized_state(
     return merged
 
 
+def should_suppress_transient_pump_zero(
+    current_rpm: Any,
+    parsed: dict[str, Any],
+    reported: dict[str, Any],
+) -> bool:
+    """Return whether a zero-RPM update contradicts an active pump demand."""
+    previous_rpm = _coerce_number(current_rpm)
+    candidate_rpm = _coerce_number(parsed.get("pump_rpm"))
+    if previous_rpm is None or previous_rpm <= 0 or candidate_rpm != 0:
+        return False
+
+    filt0 = _mapping(reported.get("filt0"))
+    return (
+        parsed.get("pump_power_setpoint") is True
+        or parsed.get("waterfall") is True
+        or _coerce_bool(filt0.get("st")) is True
+    )
+
+
 def normalize_tcx_state(reported: dict[str, Any]) -> dict[str, Any]:
     """Normalize the TCX fields observed from AquaLink TCX 5.x."""
     flat = _flatten(reported)

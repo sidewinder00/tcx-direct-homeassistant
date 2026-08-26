@@ -6,6 +6,7 @@ from homeassistant.components.diagnostics import async_redact_data
 from homeassistant.core import HomeAssistant
 
 from . import TCXConfigEntry
+from .const import PUMP_ZERO_GRACE_SECONDS
 from .redaction import sanitize_diagnostics
 
 TO_REDACT = {
@@ -119,6 +120,12 @@ async def async_get_config_entry_diagnostics(
         "cache": {
             "has_normalized_state": bool(coordinator.normalized),
             "has_raw_reported_state": bool(coordinator.raw_reported),
+        },
+        "pump_zero_filter": {
+            "grace_period_seconds": PUMP_ZERO_GRACE_SECONDS,
+            "pending": coordinator.pump_zero_suppression_pending,
+            "suppression_count": coordinator.pump_zero_suppression_count,
+            "last_suppressed_at": coordinator.last_pump_zero_suppressed_at,
         },
         "normalized": coordinator.normalized,
         "reported_state": sanitize_diagnostics(coordinator.raw_reported),
