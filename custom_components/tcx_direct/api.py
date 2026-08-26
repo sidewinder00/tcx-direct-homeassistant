@@ -25,6 +25,7 @@ from .const import (
     CONTROL_NAMESPACE,
     IAQUALINK_API,
     MAX_WEBSOCKET_SESSION,
+    PUMP_POWER_CONFIRM_TIMEOUT,
     RECENT_WS_STRUCTURES,
     RECONNECT_MAX,
     SHADOW_INTERVAL,
@@ -1010,6 +1011,7 @@ class TCXClient:
         desired: dict[str, Any],
         description: str,
         predicate: Callable[[dict[str, Any]], bool],
+        confirmation_timeout: float = CONTROL_CONFIRM_TIMEOUT,
     ) -> None:
         """Send one serialized TCX command and require reported confirmation."""
         ws = self._ws
@@ -1042,10 +1044,10 @@ class TCXClient:
 
         try:
             await ws.send_json(message)
-            await asyncio.wait_for(future, timeout=CONTROL_CONFIRM_TIMEOUT)
+            await asyncio.wait_for(future, timeout=confirmation_timeout)
         except asyncio.TimeoutError as err:
             message_text = (
-                f"TCX did not confirm {description} within {CONTROL_CONFIRM_TIMEOUT} seconds"
+                f"TCX did not confirm {description} within {confirmation_timeout:g} seconds"
             )
             self.control_failure_count += 1
             self.control_failure_counts[description] = (
@@ -1134,6 +1136,7 @@ class TCXClient:
                     (confirmed := _find_pool_mode(reported)) is not None
                     and _coerce_bool(confirmed[1].get("st")) is enabled
                 ),
+                confirmation_timeout=PUMP_POWER_CONFIRM_TIMEOUT,
             )
 
     async def async_set_pool_light(self, enabled: bool) -> None:

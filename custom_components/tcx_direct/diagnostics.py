@@ -6,7 +6,11 @@ from homeassistant.components.diagnostics import async_redact_data
 from homeassistant.core import HomeAssistant
 
 from . import TCXConfigEntry
-from .const import PUMP_ZERO_GRACE_SECONDS
+from .const import (
+    CONTROL_CONFIRM_TIMEOUT,
+    PUMP_POWER_CONFIRM_TIMEOUT,
+    PUMP_ZERO_GRACE_SECONDS,
+)
 from .redaction import sanitize_diagnostics
 
 TO_REDACT = {
@@ -100,6 +104,8 @@ async def async_get_config_entry_diagnostics(
             "rate_limit_count": client.shadow_rate_limit_count,
         },
         "control": {
+            "default_confirmation_timeout_seconds": CONTROL_CONFIRM_TIMEOUT,
+            "pump_power_confirmation_timeout_seconds": PUMP_POWER_CONFIRM_TIMEOUT,
             "command_count": client.control_command_count,
             "success_count": client.control_success_count,
             "failure_count": client.control_failure_count,

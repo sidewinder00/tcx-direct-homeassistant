@@ -2,6 +2,15 @@
 
 All notable changes to Jandy TCX Direct are documented here.
 
+## [0.2.1] - 2026-08-26
+
+### Fixed
+- Allow up to 45 seconds for pump-power reported-state confirmation, preventing a physically successful but slowly reported pump start from falsely failing a Home Assistant automation.
+- Keep the 15-second confirmation window for pump speed, pool light, and Waterfall commands that report promptly.
+
+### Added
+- Report the default and pump-power confirmation timeouts in integration diagnostics.
+
 ## [0.2.0] - 2026-08-25
 
 ### Release highlights
