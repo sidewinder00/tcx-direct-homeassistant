@@ -21,4 +21,3 @@ class TCXEntity(CoordinatorEntity[TCXCoordinator]):
             manufacturer="Jandy / Fluidra",
             model="AquaLink TCX",
         )
-
