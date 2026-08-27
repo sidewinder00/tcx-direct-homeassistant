@@ -1,0 +1,16 @@
+start_pump_at_speed:
+  target:
+    entity:
+      integration: tcx_direct
+      domain: switch
+  fields:
+    rpm:
+      required: true
+      example: 2575
+      selector:
+        number:
+          min: 600
+          max: 3450
+          step: 25
+          unit_of_measurement: rpm
+          mode: box

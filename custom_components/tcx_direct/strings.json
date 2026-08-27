@@ -1,5 +1,17 @@
 {
   "title": "Jandy TCX Direct",
+  "services": {
+    "start_pump_at_speed": {
+      "name": "Start pump at speed",
+      "description": "Start Pool Filtration and send its manual RPM together in one TCX command.",
+      "fields": {
+        "rpm": {
+          "name": "Pump speed",
+          "description": "Manual pump speed to use after priming finishes."
+        }
+      }
+    }
+  },
   "config": {
     "step": {
       "user": {

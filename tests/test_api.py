@@ -443,6 +443,82 @@ def test_pump_power_control_uses_extended_confirmation_timeout(monkeypatch) -> N
     assert PUMP_POWER_CONFIRM_TIMEOUT > CONTROL_CONFIRM_TIMEOUT
 
 
+def test_start_pump_at_speed_uses_one_atomic_desired_frame(monkeypatch) -> None:
+    client = make_client()
+    client.user_id = "12345"
+    client.websocket_connected = True
+    client.reported = {
+        "pool": {"fr": "Pool Filtration", "et": "V_POS", "app": "POOL_M", "st": 0},
+        "filt0": {
+            "fr": "Filtration",
+            "et": "F_CTRL",
+            "app": "FILT",
+            "manSpd": 1100,
+            "minSpd": 600,
+            "maxSpd": 3450,
+        },
+        "ecm0": {"st": 0, "minSpd": 600, "maxSpd": 3450},
+    }
+
+    class FakeWebSocket:
+        closed = False
+
+        def __init__(self) -> None:
+            self.messages: list[dict[str, object]] = []
+
+        async def send_json(self, message: dict[str, object]) -> None:
+            self.messages.append(message)
+            # TCX confirms Pool Filtration before it publishes the manual RPM
+            # selected for the end of its three-minute priming cycle.
+            client.reported["pool"]["st"] = 1
+            client.reported["ecm0"]["st"] = 1
+            client._resolve_pending_control()
+
+    websocket = FakeWebSocket()
+    client._ws = websocket  # type: ignore[assignment]
+
+    captured_timeouts: list[float | None] = []
+    original_wait_for = asyncio.wait_for
+
+    async def capture_wait_for(awaitable, timeout=None):
+        captured_timeouts.append(timeout)
+        return await original_wait_for(awaitable, timeout=timeout)
+
+    monkeypatch.setattr(asyncio, "wait_for", capture_wait_for)
+
+    asyncio.run(client.async_start_pump_at_speed(2575))
+
+    assert len(websocket.messages) == 1
+    assert websocket.messages[0]["payload"]["state"]["desired"] == {
+        "pool": {"st": 1},
+        "filt0": {"manSpd": 2575},
+    }
+    assert captured_timeouts == [PUMP_POWER_CONFIRM_TIMEOUT]
+    assert client.control_command_counts["pump start at speed"] == 1
+    assert client.control_success_counts["pump start at speed"] == 1
+
+
+def test_start_pump_at_speed_enforces_reported_limits() -> None:
+    client = make_client()
+    client.user_id = "12345"
+    client.websocket_connected = True
+    client.reported = {
+        "pool": {"fr": "Pool Filtration", "et": "V_POS", "app": "POOL_M", "st": 0},
+        "filt0": {
+            "fr": "Filtration",
+            "et": "F_CTRL",
+            "app": "FILT",
+            "manSpd": 1100,
+            "minSpd": 600,
+            "maxSpd": 3450,
+        },
+        "ecm0": {"st": 0, "minSpd": 600, "maxSpd": 3450},
+    }
+
+    with pytest.raises(api.TCXControlUnsupported, match="between 600 and 3450"):
+        asyncio.run(client.async_start_pump_at_speed(4000))
+
+
 def test_pool_light_control_targets_confirmed_light_and_waits_for_report() -> None:
     client = make_client()
     client.user_id = "12345"

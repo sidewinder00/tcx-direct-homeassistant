@@ -1139,6 +1139,69 @@ class TCXClient:
                 confirmation_timeout=PUMP_POWER_CONFIRM_TIMEOUT,
             )
 
+    async def async_start_pump_at_speed(self, speed: float) -> None:
+        """Start Pool Filtration and set manual RPM in one desired-state frame."""
+        async with self._control_lock:
+            pool_mode = _find_pool_mode(self.reported)
+            if pool_mode is None:
+                raise TCXControlUnsupported(
+                    "This TCX controller has no confirmed V_POS/POOL_M pool mode"
+                )
+            pool_key, pool_state = pool_mode
+
+            controller = _find_filter_controller(self.reported)
+            if controller is None:
+                raise TCXControlUnsupported(
+                    "This TCX controller has no confirmed F_CTRL/FILT controller"
+                )
+            controller_key, controller_state = controller
+
+            ecm0 = _mapping(self.reported.get("ecm0"))
+            minimum = _coerce_number(ecm0.get("minSpd"))
+            if minimum is None:
+                minimum = _coerce_number(controller_state.get("minSpd"))
+            maximum = _coerce_number(ecm0.get("maxSpd"))
+            if maximum is None:
+                maximum = _coerce_number(controller_state.get("maxSpd"))
+            if minimum is None or maximum is None:
+                raise TCXControlUnsupported(
+                    "The TCX controller did not report safe pump speed limits"
+                )
+
+            requested = int(round(speed))
+            if requested < minimum or requested > maximum:
+                raise TCXControlUnsupported(
+                    f"Pump speed must be between {minimum:.0f} and {maximum:.0f} RPM"
+                )
+
+            if _coerce_bool(pool_state.get("st")) is True:
+                current = _coerce_number(controller_state.get("manSpd"))
+                if current is not None and round(current) == requested:
+                    return
+                await self._async_send_control(
+                    {controller_key: {"manSpd": requested}},
+                    "pump speed",
+                    lambda reported: (
+                        (confirmed := _find_filter_controller(reported)) is not None
+                        and (actual := _coerce_number(confirmed[1].get("manSpd"))) is not None
+                        and round(actual) == requested
+                    ),
+                )
+                return
+
+            await self._async_send_control(
+                {
+                    pool_key: {"st": 1},
+                    controller_key: {"manSpd": requested},
+                },
+                "pump start at speed",
+                lambda reported: (
+                    (confirmed := _find_pool_mode(reported)) is not None
+                    and _coerce_bool(confirmed[1].get("st")) is True
+                ),
+                confirmation_timeout=PUMP_POWER_CONFIRM_TIMEOUT,
+            )
+
     async def async_set_pool_light(self, enabled: bool) -> None:
         """Set the captured TCX pool light and await reported state."""
         async with self._control_lock:

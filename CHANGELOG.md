@@ -2,6 +2,16 @@
 
 All notable changes to Jandy TCX Direct are documented here.
 
+## [0.2.2] - 2026-08-27
+
+### Added
+- Add a `Start pump at speed` Home Assistant action that sends Pool Filtration on and the requested manual RPM together in one TCX desired-state frame.
+- Expose the action in Home Assistant's action editor with a Pump Power entity target and RPM field.
+
+### Fixed
+- Avoid the ineffective stopped-pump speed pre-stage sequence that TCX echoed but did not retain through priming.
+- Let schedule-driven starts transition directly from the controller's priming speed to the scheduled manual speed when the combined command is honored.
+
 ## [0.2.1] - 2026-08-26
 
 ### Fixed

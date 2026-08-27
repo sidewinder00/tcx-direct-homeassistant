@@ -3,11 +3,16 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
+import voluptuous as vol
+from homeassistant.components.switch import DOMAIN as SWITCH_DOMAIN
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
+from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import service
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.typing import ConfigType
 
 from .api import (
     TCXAuthError,
@@ -15,7 +20,13 @@ from .api import (
     TCXConnectionError,
     TCXShadowUnsupported,
 )
-from .const import CONF_DEVICE_ID, PLATFORMS
+from .const import (
+    ATTR_RPM,
+    CONF_DEVICE_ID,
+    DOMAIN,
+    PLATFORMS,
+    SERVICE_START_PUMP_AT_SPEED,
+)
 from .coordinator import TCXCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -28,6 +39,19 @@ class TCXRuntimeData:
 
 
 TCXConfigEntry = ConfigEntry[TCXRuntimeData]
+
+
+async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
+    """Register TCX Direct service actions independently of config entries."""
+    service.async_register_platform_entity_service(
+        hass,
+        DOMAIN,
+        SERVICE_START_PUMP_AT_SPEED,
+        entity_domain=SWITCH_DOMAIN,
+        schema={vol.Required(ATTR_RPM): cv.positive_float},
+        func="async_start_pump_at_speed",
+    )
+    return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: TCXConfigEntry) -> bool:

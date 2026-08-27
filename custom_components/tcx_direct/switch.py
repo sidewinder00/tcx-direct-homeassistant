@@ -55,6 +55,13 @@ class TCXPumpPowerSwitch(TCXEntity, SwitchEntity):
     async def async_turn_off(self, **kwargs: object) -> None:
         await self._async_set_state(False)
 
+    async def async_start_pump_at_speed(self, rpm: float) -> None:
+        """Start Pool Filtration with its manual RPM in one desired-state frame."""
+        try:
+            await self.entry.runtime_data.client.async_start_pump_at_speed(rpm)
+        except TCXError as err:
+            raise HomeAssistantError(str(err)) from err
+
     async def _async_set_state(self, enabled: bool) -> None:
         try:
             await self.entry.runtime_data.client.async_set_pump_power(enabled)

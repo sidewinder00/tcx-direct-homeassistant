@@ -150,6 +150,23 @@ reported `pool.st` confirmation even though the pump starts immediately.
 Beginning with v0.2.1, Pump Power therefore uses a dedicated 45-second
 confirmation window. Other equipment controls retain the 15-second window.
 
+Live tests also showed that a standalone `filt0.manSpd` desired write made
+while the pump is stopped is echoed by Zodiac but is not retained by the TCX
+through its priming cycle. Beginning with v0.2.2, the Start Pump at Speed
+action sends both requested values in one `StateController` frame:
+
+```json
+{
+  "pool": {"st": 1},
+  "filt0": {"manSpd": 2575}
+}
+```
+
+The action confirms the Pool Filtration start using the 45-second power
+window. The controller may not report the new manual speed until its priming
+cycle completes, so the action does not require an immediate `manSpd`
+confirmation while the motor is priming.
+
 ### Waterfall feature relay: `fcr0`
 
 The tested controller reports its waterfall as a feature relay with the
