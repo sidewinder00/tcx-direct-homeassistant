@@ -21,6 +21,7 @@ async def async_setup_entry(
     async_add_entities(
         [
             TCXPumpSpeedNumber(entry),
+            TCXPoolFiltrationPresetNumber(entry),
             TCXWaterfallRPMNumber(entry),
         ]
     )
@@ -90,6 +91,52 @@ class TCXPumpSpeedNumber(TCXEntity, NumberEntity):
     async def async_set_native_value(self, value: float) -> None:
         try:
             await self.entry.runtime_data.client.async_set_pump_speed(value)
+        except TCXError as err:
+            raise HomeAssistantError(str(err)) from err
+
+
+class TCXPoolFiltrationPresetNumber(TCXEntity, NumberEntity):
+    """Control the persistent TCX Pool Filtration speed preset."""
+
+    _attr_name = "Pool Filtration Preset"
+    _attr_icon = "mdi:pump"
+    _attr_native_step = 25.0
+    _attr_native_unit_of_measurement = "rpm"
+    _attr_mode = NumberMode.BOX
+
+    def __init__(self, entry: TCXConfigEntry) -> None:
+        super().__init__(entry)
+        self._attr_unique_id = f"{entry.data['device_id']}_pool_filtration_preset"
+
+    def _number(self, key: str) -> float | None:
+        return _number(self.coordinator.data or {}, key)
+
+    @property
+    def available(self) -> bool:
+        return (
+            super().available
+            and (self.coordinator.data or {}).get("pool_filtration_preset_control_supported")
+            is True
+            and self._number("pool_filtration_preset") is not None
+            and self._number("pump_min_rpm") is not None
+            and self._number("pump_max_rpm") is not None
+        )
+
+    @property
+    def native_value(self) -> float | None:
+        return self._number("pool_filtration_preset")
+
+    @property
+    def native_min_value(self) -> float:
+        return self._number("pump_min_rpm") or 0.0
+
+    @property
+    def native_max_value(self) -> float:
+        return self._number("pump_max_rpm") or 0.0
+
+    async def async_set_native_value(self, value: float) -> None:
+        try:
+            await self.entry.runtime_data.client.async_set_pool_filtration_preset(value)
         except TCXError as err:
             raise HomeAssistantError(str(err)) from err
 

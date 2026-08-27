@@ -152,8 +152,8 @@ confirmation window. Other equipment controls retain the 15-second window.
 
 Live tests also showed that a standalone `filt0.manSpd` desired write made
 while the pump is stopped is echoed by Zodiac but is not retained by the TCX
-through its priming cycle. Beginning with v0.2.2, the Start Pump at Speed
-action sends both requested values in one `StateController` frame:
+through its priming cycle. v0.2.2 tested sending both requested values in one
+`StateController` frame:
 
 ```json
 {
@@ -162,10 +162,41 @@ action sends both requested values in one `StateController` frame:
 }
 ```
 
-The action confirms the Pool Filtration start using the 45-second power
-window. The controller may not report the new manual speed until its priming
-cycle completes, so the action does not require an immediate `manSpd`
-confirmation while the motor is priming.
+The tested controller accepted this frame and started, but still selected its
+persistent 1100 RPM Pool Filtration preset after priming. A later manual-speed
+recovery write also failed to confirm.
+
+Official iAquaLink traffic captured while changing Feature Speeds showed that
+the persistent presets are written as the complete `ecm0.spdList`:
+
+```json
+{
+  "ecm0": {
+    "spdList": [
+      {"name": "Pool Filtration", "speed": 2525, "app": "BD1_F", "ar": 1},
+      {"name": "Spa Filtration", "speed": 2525, "app": "BD2_F", "ar": 2},
+      {"name": "Waterfall", "speed": 2850, "app": "WF", "ar": 3}
+    ]
+  }
+}
+```
+
+The app's save included every slider value and changed Spa Filtration from the
+2750 RPM seen in preceding diagnostics to 2525 RPM even though only the Pool
+slider was intentionally adjusted. Beginning with v0.2.3, TCX Direct avoids
+that side effect: it exposes the `BD1_F` value as Pool Filtration Preset, copies
+the currently reported list, changes only the `BD1_F` speed, sends the complete
+list, and confirms that value from reported state. Spa Filtration and Waterfall
+are preserved. Start Pump at Speed performs that confirmed preset write first
+and then sends only the normal power command:
+
+```json
+{"pool": {"st": 1}}
+```
+
+The live test confirmed that TCX then transitions from its 2500 RPM priming
+command directly to the new Pool Filtration preset without a startup
+`filt0.manSpd` write.
 
 ### Waterfall feature relay: `fcr0`
 

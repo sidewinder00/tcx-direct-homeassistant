@@ -2,6 +2,17 @@
 
 All notable changes to Jandy TCX Direct are documented here.
 
+## [0.2.3] - 2026-08-27
+
+### Added
+- Add a writable Pool Filtration Preset control backed by the confirmed `ecm0.spdList` protocol.
+- Report the Pool Filtration preset and its control availability in normalized state and diagnostics.
+
+### Fixed
+- Make `Start pump at speed` write and confirm the persistent Pool Filtration preset before sending a normal pump-on command, allowing TCX to transition directly from priming to the scheduled RPM.
+- Preserve the existing Spa Filtration and Waterfall presets when updating Pool Filtration.
+- Remove the ineffective cold-start `manSpd` command and post-priming fallback from the recommended schedule controller while retaining normal manual-speed writes for an already-running pump.
+
 ## [0.2.2] - 2026-08-27
 
 ### Added

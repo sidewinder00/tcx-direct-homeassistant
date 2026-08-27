@@ -3,11 +3,11 @@
   "services": {
     "start_pump_at_speed": {
       "name": "Start pump at speed",
-      "description": "Start Pool Filtration and send its manual RPM together in one TCX command.",
+      "description": "Set the persistent Pool Filtration preset, then start the pump normally so TCX uses that RPM after priming.",
       "fields": {
         "rpm": {
-          "name": "Pump speed",
-          "description": "Manual pump speed to use after priming finishes."
+          "name": "Filtration preset",
+          "description": "Pool Filtration preset RPM for TCX to use after priming finishes."
         }
       }
     }

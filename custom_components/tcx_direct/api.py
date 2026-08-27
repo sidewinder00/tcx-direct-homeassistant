@@ -241,6 +241,19 @@ def _mapping(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def _find_speed_preset(speed_list: Any, app: str) -> dict[str, Any] | None:
+    """Return a named ECM speed preset by its stable application identifier."""
+    if not isinstance(speed_list, list):
+        return None
+    wanted = _norm(app)
+    for preset in speed_list:
+        if not isinstance(preset, dict):
+            continue
+        if _norm(str(preset.get("app", ""))) == wanted:
+            return preset
+    return None
+
+
 def _utc_now_iso() -> str:
     """Return an ISO UTC timestamp for diagnostics."""
     return datetime.now(timezone.utc).isoformat()
@@ -506,9 +519,21 @@ def normalize_tcx_state(reported: dict[str, Any]) -> dict[str, Any]:
         and max_rpm is not None
     )
 
+    speed_list = ecm0.get("spdList") or filt0.get("spdList") or []
+    pool_filtration_entry = _find_speed_preset(speed_list, "BD1_F")
+    pool_filtration_preset = (
+        _coerce_number(pool_filtration_entry.get("speed"))
+        if pool_filtration_entry is not None
+        else None
+    )
+    pool_filtration_preset_control_supported = (
+        pump_speed_control_supported
+        and isinstance(ecm0.get("spdList"), list)
+        and _find_speed_preset(ecm0.get("spdList"), "BD1_F") is not None
+    )
+
     pump_preset = None
     if pump_state is not False and requested_rpm is not None:
-        speed_list = ecm0.get("spdList") or filt0.get("spdList") or []
         if isinstance(speed_list, list):
             for preset in speed_list:
                 if not isinstance(preset, dict):
@@ -619,6 +644,8 @@ def normalize_tcx_state(reported: dict[str, Any]) -> dict[str, Any]:
         "pump_min_rpm": min_rpm,
         "pump_max_rpm": max_rpm,
         "pump_speed_setpoint": pump_speed_setpoint,
+        "pool_filtration_preset": pool_filtration_preset,
+        "pool_filtration_preset_control_supported": (pool_filtration_preset_control_supported),
         "pump_power_setpoint": pump_power_setpoint,
         "pump_power_control_supported": pump_power_control_supported,
         "pump_speed_control_supported": pump_speed_control_supported,
@@ -1121,86 +1148,96 @@ class TCXClient:
     async def async_set_pump_power(self, enabled: bool) -> None:
         """Set the confirmed Pool Filtration mode and await reported state."""
         async with self._control_lock:
-            pool_mode = _find_pool_mode(self.reported)
-            if pool_mode is None:
-                raise TCXControlUnsupported(
-                    "This TCX controller has no confirmed V_POS/POOL_M pool mode"
-                )
-            pool_key, pool_state = pool_mode
-            if _coerce_bool(pool_state.get("st")) is enabled:
-                return
-            await self._async_send_control(
-                {pool_key: {"st": int(enabled)}},
-                "pump power state",
-                lambda reported: (
-                    (confirmed := _find_pool_mode(reported)) is not None
-                    and _coerce_bool(confirmed[1].get("st")) is enabled
-                ),
-                confirmation_timeout=PUMP_POWER_CONFIRM_TIMEOUT,
+            await self._async_set_pump_power_locked(enabled)
+
+    async def _async_set_pump_power_locked(self, enabled: bool) -> None:
+        """Set pump power while the caller holds the control lock."""
+        pool_mode = _find_pool_mode(self.reported)
+        if pool_mode is None:
+            raise TCXControlUnsupported(
+                "This TCX controller has no confirmed V_POS/POOL_M pool mode"
             )
+        pool_key, pool_state = pool_mode
+        if _coerce_bool(pool_state.get("st")) is enabled:
+            return
+        await self._async_send_control(
+            {pool_key: {"st": int(enabled)}},
+            "pump power state",
+            lambda reported: (
+                (confirmed := _find_pool_mode(reported)) is not None
+                and _coerce_bool(confirmed[1].get("st")) is enabled
+            ),
+            confirmation_timeout=PUMP_POWER_CONFIRM_TIMEOUT,
+        )
 
     async def async_start_pump_at_speed(self, speed: float) -> None:
-        """Start Pool Filtration and set manual RPM in one desired-state frame."""
+        """Set the Pool Filtration preset, then start the pump normally."""
         async with self._control_lock:
-            pool_mode = _find_pool_mode(self.reported)
-            if pool_mode is None:
-                raise TCXControlUnsupported(
-                    "This TCX controller has no confirmed V_POS/POOL_M pool mode"
-                )
-            pool_key, pool_state = pool_mode
+            await self._async_set_pool_filtration_preset_locked(speed)
+            await self._async_set_pump_power_locked(True)
 
-            controller = _find_filter_controller(self.reported)
-            if controller is None:
-                raise TCXControlUnsupported(
-                    "This TCX controller has no confirmed F_CTRL/FILT controller"
-                )
-            controller_key, controller_state = controller
+    async def async_set_pool_filtration_preset(self, speed: float) -> None:
+        """Set only the Pool Filtration entry in the complete ECM preset list."""
+        async with self._control_lock:
+            await self._async_set_pool_filtration_preset_locked(speed)
 
-            ecm0 = _mapping(self.reported.get("ecm0"))
-            minimum = _coerce_number(ecm0.get("minSpd"))
-            if minimum is None:
-                minimum = _coerce_number(controller_state.get("minSpd"))
-            maximum = _coerce_number(ecm0.get("maxSpd"))
-            if maximum is None:
-                maximum = _coerce_number(controller_state.get("maxSpd"))
-            if minimum is None or maximum is None:
-                raise TCXControlUnsupported(
-                    "The TCX controller did not report safe pump speed limits"
-                )
-
-            requested = int(round(speed))
-            if requested < minimum or requested > maximum:
-                raise TCXControlUnsupported(
-                    f"Pump speed must be between {minimum:.0f} and {maximum:.0f} RPM"
-                )
-
-            if _coerce_bool(pool_state.get("st")) is True:
-                current = _coerce_number(controller_state.get("manSpd"))
-                if current is not None and round(current) == requested:
-                    return
-                await self._async_send_control(
-                    {controller_key: {"manSpd": requested}},
-                    "pump speed",
-                    lambda reported: (
-                        (confirmed := _find_filter_controller(reported)) is not None
-                        and (actual := _coerce_number(confirmed[1].get("manSpd"))) is not None
-                        and round(actual) == requested
-                    ),
-                )
-                return
-
-            await self._async_send_control(
-                {
-                    pool_key: {"st": 1},
-                    controller_key: {"manSpd": requested},
-                },
-                "pump start at speed",
-                lambda reported: (
-                    (confirmed := _find_pool_mode(reported)) is not None
-                    and _coerce_bool(confirmed[1].get("st")) is True
-                ),
-                confirmation_timeout=PUMP_POWER_CONFIRM_TIMEOUT,
+    async def _async_set_pool_filtration_preset_locked(self, speed: float) -> None:
+        """Set the Pool preset while the caller holds the control lock."""
+        controller = _find_filter_controller(self.reported)
+        if controller is None:
+            raise TCXControlUnsupported(
+                "This TCX controller has no confirmed F_CTRL/FILT controller"
             )
+        _controller_key, controller_state = controller
+
+        ecm0 = _mapping(self.reported.get("ecm0"))
+        speed_list = ecm0.get("spdList")
+        pool_filtration = _find_speed_preset(speed_list, "BD1_F")
+        if pool_filtration is None:
+            raise TCXControlUnsupported(
+                "This TCX controller did not report a BD1_F Pool Filtration preset"
+            )
+
+        minimum = _coerce_number(ecm0.get("minSpd"))
+        if minimum is None:
+            minimum = _coerce_number(controller_state.get("minSpd"))
+        maximum = _coerce_number(ecm0.get("maxSpd"))
+        if maximum is None:
+            maximum = _coerce_number(controller_state.get("maxSpd"))
+        if minimum is None or maximum is None:
+            raise TCXControlUnsupported("The TCX controller did not report safe pump speed limits")
+
+        requested = int(round(speed))
+        if requested < minimum or requested > maximum:
+            raise TCXControlUnsupported(
+                f"Pump speed must be between {minimum:.0f} and {maximum:.0f} RPM"
+            )
+
+        current = _coerce_number(pool_filtration.get("speed"))
+        if current is not None and round(current) == requested:
+            return
+
+        updated_speed_list = deepcopy(speed_list)
+        updated_pool_filtration = _find_speed_preset(updated_speed_list, "BD1_F")
+        if updated_pool_filtration is None:
+            raise TCXControlUnsupported("Unable to preserve the TCX speed preset list")
+        updated_pool_filtration["speed"] = requested
+
+        await self._async_send_control(
+            {"ecm0": {"spdList": updated_speed_list}},
+            "pool filtration preset",
+            lambda reported: (
+                (
+                    confirmed := _find_speed_preset(
+                        _mapping(reported.get("ecm0")).get("spdList"),
+                        "BD1_F",
+                    )
+                )
+                is not None
+                and (actual := _coerce_number(confirmed.get("speed"))) is not None
+                and round(actual) == requested
+            ),
+        )
 
     async def async_set_pool_light(self, enabled: bool) -> None:
         """Set the captured TCX pool light and await reported state."""

@@ -6,7 +6,7 @@ start_pump_at_speed:
   fields:
     rpm:
       required: true
-      example: 2575
+      example: 2600
       selector:
         number:
           min: 600

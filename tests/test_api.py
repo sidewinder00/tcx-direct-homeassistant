@@ -40,7 +40,21 @@ def test_normalize_observed_tcx_state() -> None:
             "reqSpd": 2600,
             "minSpd": 600,
             "maxSpd": 3450,
-            "spdList": [{"name": "Pool Filtration", "speed": 1100}],
+            "spdList": [
+                {
+                    "name": "Pool Filtration",
+                    "speed": 1100,
+                    "app": "BD1_F",
+                    "ar": 1,
+                },
+                {
+                    "name": "Spa Filtration",
+                    "speed": 2750,
+                    "app": "BD2_F",
+                    "ar": 2,
+                },
+                {"name": "Waterfall", "speed": 2850, "app": "WF", "ar": 3},
+            ],
         },
         "filt0": {
             "et": "F_CTRL",
@@ -60,6 +74,8 @@ def test_normalize_observed_tcx_state() -> None:
     assert normalized["pump"] is True
     assert normalized["pump_rpm"] == 2600
     assert normalized["pump_speed_setpoint"] == 2600
+    assert normalized["pool_filtration_preset"] == 1100
+    assert normalized["pool_filtration_preset_control_supported"] is True
     assert normalized["pump_power_setpoint"] is True
     assert normalized["pump_power_control_supported"] is True
     assert normalized["pump_speed_control_supported"] is True
@@ -443,7 +459,7 @@ def test_pump_power_control_uses_extended_confirmation_timeout(monkeypatch) -> N
     assert PUMP_POWER_CONFIRM_TIMEOUT > CONTROL_CONFIRM_TIMEOUT
 
 
-def test_start_pump_at_speed_uses_one_atomic_desired_frame(monkeypatch) -> None:
+def test_start_pump_at_speed_sets_pool_preset_then_starts_normally(monkeypatch) -> None:
     client = make_client()
     client.user_id = "12345"
     client.websocket_connected = True
@@ -457,7 +473,26 @@ def test_start_pump_at_speed_uses_one_atomic_desired_frame(monkeypatch) -> None:
             "minSpd": 600,
             "maxSpd": 3450,
         },
-        "ecm0": {"st": 0, "minSpd": 600, "maxSpd": 3450},
+        "ecm0": {
+            "st": 0,
+            "minSpd": 600,
+            "maxSpd": 3450,
+            "spdList": [
+                {
+                    "name": "Pool Filtration",
+                    "speed": 1100,
+                    "app": "BD1_F",
+                    "ar": 1,
+                },
+                {
+                    "name": "Spa Filtration",
+                    "speed": 2750,
+                    "app": "BD2_F",
+                    "ar": 2,
+                },
+                {"name": "Waterfall", "speed": 2850, "app": "WF", "ar": 3},
+            ],
+        },
     }
 
     class FakeWebSocket:
@@ -468,10 +503,12 @@ def test_start_pump_at_speed_uses_one_atomic_desired_frame(monkeypatch) -> None:
 
         async def send_json(self, message: dict[str, object]) -> None:
             self.messages.append(message)
-            # TCX confirms Pool Filtration before it publishes the manual RPM
-            # selected for the end of its three-minute priming cycle.
-            client.reported["pool"]["st"] = 1
-            client.reported["ecm0"]["st"] = 1
+            desired = message["payload"]["state"]["desired"]
+            if "ecm0" in desired:
+                client.reported["ecm0"]["spdList"] = desired["ecm0"]["spdList"]
+            if "pool" in desired:
+                client.reported["pool"]["st"] = desired["pool"]["st"]
+                client.reported["ecm0"]["st"] = desired["pool"]["st"]
             client._resolve_pending_control()
 
     websocket = FakeWebSocket()
@@ -488,14 +525,39 @@ def test_start_pump_at_speed_uses_one_atomic_desired_frame(monkeypatch) -> None:
 
     asyncio.run(client.async_start_pump_at_speed(2575))
 
-    assert len(websocket.messages) == 1
-    assert websocket.messages[0]["payload"]["state"]["desired"] == {
-        "pool": {"st": 1},
-        "filt0": {"manSpd": 2575},
-    }
-    assert captured_timeouts == [PUMP_POWER_CONFIRM_TIMEOUT]
-    assert client.control_command_counts["pump start at speed"] == 1
-    assert client.control_success_counts["pump start at speed"] == 1
+    desired_frames = [message["payload"]["state"]["desired"] for message in websocket.messages]
+    assert desired_frames == [
+        {
+            "ecm0": {
+                "spdList": [
+                    {
+                        "name": "Pool Filtration",
+                        "speed": 2575,
+                        "app": "BD1_F",
+                        "ar": 1,
+                    },
+                    {
+                        "name": "Spa Filtration",
+                        "speed": 2750,
+                        "app": "BD2_F",
+                        "ar": 2,
+                    },
+                    {
+                        "name": "Waterfall",
+                        "speed": 2850,
+                        "app": "WF",
+                        "ar": 3,
+                    },
+                ]
+            }
+        },
+        {"pool": {"st": 1}},
+    ]
+    assert captured_timeouts == [CONTROL_CONFIRM_TIMEOUT, PUMP_POWER_CONFIRM_TIMEOUT]
+    assert client.control_command_counts["pool filtration preset"] == 1
+    assert client.control_command_counts["pump power state"] == 1
+    assert client.control_success_counts["pool filtration preset"] == 1
+    assert client.control_success_counts["pump power state"] == 1
 
 
 def test_start_pump_at_speed_enforces_reported_limits() -> None:
@@ -512,7 +574,19 @@ def test_start_pump_at_speed_enforces_reported_limits() -> None:
             "minSpd": 600,
             "maxSpd": 3450,
         },
-        "ecm0": {"st": 0, "minSpd": 600, "maxSpd": 3450},
+        "ecm0": {
+            "st": 0,
+            "minSpd": 600,
+            "maxSpd": 3450,
+            "spdList": [
+                {
+                    "name": "Pool Filtration",
+                    "speed": 1100,
+                    "app": "BD1_F",
+                    "ar": 1,
+                }
+            ],
+        },
     }
 
     with pytest.raises(api.TCXControlUnsupported, match="between 600 and 3450"):

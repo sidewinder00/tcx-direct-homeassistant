@@ -41,6 +41,8 @@ def test_status_points_and_writable_controls_remain_separate() -> None:
     assert "TCXPoolLightSwitch" in switch
     assert "TCXWaterfallSwitch" in switch
     assert "TCXPumpSpeedNumber" in number
+    assert "TCXPoolFiltrationPresetNumber" in number
     assert "TCXWaterfallRPMNumber" in number
     assert '_attr_name = "Pump Manual Speed"' in number
+    assert '_attr_name = "Pool Filtration Preset"' in number
     assert '_attr_name = "Waterfall RPM"' in number
