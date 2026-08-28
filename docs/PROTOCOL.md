@@ -88,6 +88,13 @@ eventual speed. Preset matching therefore uses `reqSpd` independently. If the
 pump state is explicitly off, the RPM entity reports `0` rather than a retained
 setpoint.
 
+Beginning with v0.2.5, Pump Requested RPM exposes `ecm0.reqSpd` independently.
+Pump Operating Phase is derived conservatively from `ecm0.st`, `cmdSpd`,
+`reqSpd`, `prmSpd`, and the confirmed Waterfall relay. A running pump is
+reported as Priming only when the active command matches `prmSpd` and differs
+from the requested RPM. Other mismatches report Transitioning rather than
+guessing an undocumented controller state.
+
 Starting in v0.1.17, a transition filter holds the last valid nonzero RPM for
 up to 90 seconds when `ecm0` briefly reports a stopped motor while Pool
 Filtration, `filt0`, or Waterfall still requests operation. A new nonzero
@@ -225,6 +232,15 @@ same action writes and confirms both the persistent Pool Filtration preset and
 `manSpd` immediately. A refresh received while `reqSpd` already matches the
 target but `cmdSpd` still reports priming is deferred until both values match.
 
+### Controller operating mode: `systemMode`
+
+The controller reports a top-level numeric `systemMode`. A diagnostic captured
+immediately after the physical TCX panel was returned to Auto reported
+`systemMode = 1`, so v0.2.5 maps only code `1` to **Auto**. Other numeric values
+are retained and displayed as `Unknown (code N)` until a diagnostic is captured
+while the physical panel shows the corresponding mode. TCX Direct does not
+write `systemMode` or automatically override a local maintenance lockout.
+
 ### Waterfall feature relay: `fcr0`
 
 The tested controller reports its waterfall as a feature relay with the
@@ -284,6 +300,10 @@ Observed controller-level fields include:
 - `site` configuration
 - `equipment.ecm.ecm0` motor identification data
 
+v0.2.5 exposes `freezeSP` as a read-only diagnostic. The captured controller
+reported `33`; the entity deliberately omits a unit until the field's unit
+behavior is independently confirmed. Control of this value is not implemented.
+
 Sensitive identifiers and location values are redacted from Home Assistant Download Diagnostics.
 
 ## Fields not yet trusted
@@ -309,6 +329,12 @@ REST shadow polling updates cached state but does not independently rotate the W
 Authentication refresh, reconnect backoff, state caching, and startup re-subscription are all handled inside the Home Assistant integration; no Supervisor add-on or local bridge is required.
 
 Desired-only messages such as the recurring `freezeSP` echo do not count as fresh equipment telemetry. They are deduplicated in diagnostics so rare desired-state structures are not displaced by heartbeat-like repeats.
+
+Home Assistant also exposes the time of the most recent WebSocket
+`state.reported` update separately from generic WebSocket traffic. A Live Data
+binary diagnostic distinguishes current WebSocket/shadow state from restored
+cache, and Control Status reports the latest command outcome independently from
+transport connectivity.
 
 ## External reference
 

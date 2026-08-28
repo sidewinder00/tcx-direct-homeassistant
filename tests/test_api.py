@@ -32,6 +32,8 @@ def test_collect_reported_merges_all_namespaces() -> None:
 
 def test_normalize_observed_tcx_state() -> None:
     reported = {
+        "systemMode": 1,
+        "freezeSP": 33,
         "water": {"value": 317, "us": 1},
         "air": {"value": 306, "us": 1},
         "TspBdy0": {"waterTempSet": 266},
@@ -74,6 +76,8 @@ def test_normalize_observed_tcx_state() -> None:
     assert normalized["pool_temperature_setpoint"] == 79.9
     assert normalized["pump"] is True
     assert normalized["pump_rpm"] == 2600
+    assert normalized["pump_requested_rpm"] == 2600
+    assert normalized["pump_operating_phase"] == "Running"
     assert normalized["pump_speed_setpoint"] == 2600
     assert normalized["pool_filtration_preset"] == 1100
     assert normalized["pool_filtration_preset_control_supported"] is True
@@ -87,6 +91,9 @@ def test_normalize_observed_tcx_state() -> None:
     assert normalized["light_color"] == 3
     assert normalized["light_color_name"] == "Romance"
     assert normalized["waterfall"] is False
+    assert normalized["controller_mode"] == "Auto"
+    assert normalized["system_mode_code"] == 1
+    assert normalized["freeze_protection_setpoint"] == 33
     assert normalized["swc_level"] is None
 
 
@@ -106,8 +113,46 @@ def test_pump_priming_reports_commanded_rpm_and_requested_preset() -> None:
 
     assert normalized["pump"] is True
     assert normalized["pump_rpm"] == 2500
+    assert normalized["pump_requested_rpm"] == 2850
+    assert normalized["pump_operating_phase"] == "Priming"
     assert normalized["pump_speed_setpoint"] == 2850
     assert normalized["pump_preset"] == "Waterfall"
+
+
+def test_unknown_controller_mode_preserves_raw_code() -> None:
+    normalized = api.normalize_tcx_state({"systemMode": 7})
+
+    assert normalized["controller_mode"] == "Unknown (code 7)"
+    assert normalized["system_mode_code"] == 7
+
+
+@pytest.mark.parametrize(
+    ("reported", "expected"),
+    [
+        ({"ecm0": {"st": 0, "cmdSpd": 0, "reqSpd": 0}}, "Off"),
+        (
+            {
+                "ecm0": {"st": 1, "cmdSpd": 2500, "reqSpd": 1100, "prmSpd": 2500},
+            },
+            "Priming",
+        ),
+        (
+            {
+                "ecm0": {"st": 1, "cmdSpd": 1600, "reqSpd": 1100, "prmSpd": 2500},
+            },
+            "Transitioning",
+        ),
+        (
+            {
+                "ecm0": {"st": 1, "cmdSpd": 2850, "reqSpd": 2850, "prmSpd": 2500},
+                "fcr0": {"et": "FRLY", "app": "WF", "st": 1},
+            },
+            "Waterfall",
+        ),
+    ],
+)
+def test_pump_operating_phase(reported: dict[str, object], expected: str) -> None:
+    assert api.normalize_tcx_state(reported)["pump_operating_phase"] == expected
 
 
 def test_pump_manual_speed_remains_separate_from_commanded_speed() -> None:
@@ -131,6 +176,13 @@ def test_pump_manual_speed_remains_separate_from_commanded_speed() -> None:
 
     assert normalized["pump_rpm"] == 2650
     assert normalized["pump_speed_setpoint"] == 1100
+
+
+def test_pump_requested_rpm_does_not_fall_back_to_manual_speed() -> None:
+    normalized = api.normalize_tcx_state({"ecm0": {"st": 1, "cmdSpd": 1200, "manSpd": 1200}})
+
+    assert normalized["pump_requested_rpm"] is None
+    assert normalized["pump_operating_phase"] == "Running"
 
 
 def test_pump_manual_speed_ignores_priming_and_runtime_changes() -> None:
@@ -337,6 +389,41 @@ def test_build_set_state_message_matches_zodiac_protocol() -> None:
     }
 
 
+def test_failed_control_publishes_failed_status() -> None:
+    client = make_client()
+    client.user_id = "12345"
+    client.websocket_connected = True
+    published_statuses: list[str] = []
+
+    class FakeWebSocket:
+        closed = False
+
+        async def send_json(self, _message: dict[str, object]) -> None:
+            return
+
+    async def handle_state(_reported: dict[str, object], _source: str) -> None:
+        return
+
+    async def handle_status() -> None:
+        published_statuses.append(client.control_status)
+
+    client._ws = FakeWebSocket()  # type: ignore[assignment]
+    client.set_callbacks(handle_state, handle_status)  # type: ignore[arg-type]
+
+    with pytest.raises(api.TCXConnectionError, match="did not confirm test command"):
+        asyncio.run(
+            client._async_send_control(
+                {"pool": {"st": 1}},
+                "test command",
+                lambda _reported: False,
+                confirmation_timeout=0,
+            )
+        )
+
+    assert client.control_status == "Failed"
+    assert published_statuses == ["Failed"]
+
+
 def test_waterfall_control_waits_for_reported_confirmation() -> None:
     client = make_client()
     client.user_id = "12345"
@@ -364,6 +451,7 @@ def test_waterfall_control_waits_for_reported_confirmation() -> None:
     assert client.control_command_count == 1
     assert client.control_success_count == 1
     assert client.control_failure_count == 0
+    assert client.control_status == "Confirmed"
     assert client.last_control_error is None
     assert client.last_control_frame is not None
     assert client.last_control_frame["namespace"] == "tcx"

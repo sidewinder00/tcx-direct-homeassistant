@@ -20,6 +20,7 @@ from .entity import TCXEntity
 @dataclass(frozen=True, kw_only=True)
 class TCXSensorDescription(SensorEntityDescription):
     data_key: str
+    attribute_keys: tuple[str, ...] = ()
 
 
 SENSORS = (
@@ -52,6 +53,20 @@ SENSORS = (
         name="Pump RPM",
         native_unit_of_measurement="rpm",
         suggested_display_precision=0,
+        icon="mdi:pump",
+    ),
+    TCXSensorDescription(
+        key="pump_requested_rpm",
+        data_key="pump_requested_rpm",
+        name="Pump Requested RPM",
+        native_unit_of_measurement="rpm",
+        suggested_display_precision=0,
+        icon="mdi:speedometer-medium",
+    ),
+    TCXSensorDescription(
+        key="pump_operating_phase",
+        data_key="pump_operating_phase",
+        name="Pump Operating Phase",
         icon="mdi:pump",
     ),
     TCXSensorDescription(
@@ -99,6 +114,21 @@ SENSORS = (
         icon="mdi:palette-outline",
     ),
     TCXSensorDescription(
+        key="controller_mode",
+        data_key="controller_mode",
+        name="Controller Mode",
+        icon="mdi:cog-transfer-outline",
+        attribute_keys=("system_mode_code",),
+    ),
+    TCXSensorDescription(
+        key="freeze_protection_setpoint",
+        data_key="freeze_protection_setpoint",
+        name="Freeze Protection Setpoint",
+        suggested_display_precision=0,
+        icon="mdi:snowflake-thermometer",
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    TCXSensorDescription(
         key="wifi_rssi",
         data_key="wifi_rssi",
         name="Wi-Fi Signal",
@@ -135,6 +165,13 @@ SENSORS = (
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
     TCXSensorDescription(
+        key="last_reported_equipment_state",
+        data_key="last_websocket_state",
+        name="Last Reported Equipment State",
+        icon="mdi:clock-check-outline",
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    TCXSensorDescription(
         key="last_shadow_update",
         data_key="last_shadow_update",
         name="Last Shadow Update",
@@ -162,6 +199,25 @@ SENSORS = (
         icon="mdi:dog-service",
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
+    TCXSensorDescription(
+        key="control_status",
+        data_key="control_status",
+        name="Control Status",
+        icon="mdi:remote",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        attribute_keys=(
+            "control_command_count",
+            "control_success_count",
+            "control_failure_count",
+            "last_control_command_at",
+            "last_control_command",
+            "last_control_error",
+            "last_control_confirmation_seconds",
+            "last_control_failure_at",
+            "last_control_failure_command",
+            "last_control_failure_error",
+        ),
+    ),
 )
 
 
@@ -184,3 +240,13 @@ class TCXSensor(TCXEntity, SensorEntity):
     @property
     def native_value(self) -> Any:
         return (self.coordinator.data or {}).get(self.entity_description.data_key)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        data = self.coordinator.data or {}
+        attributes = {
+            key: data[key]
+            for key in self.entity_description.attribute_keys
+            if data.get(key) is not None
+        }
+        return attributes or None

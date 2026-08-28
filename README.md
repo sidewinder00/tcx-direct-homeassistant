@@ -9,7 +9,7 @@ TCX Direct connects Home Assistant directly to the iAquaLink/Zodiac cloud. It do
 
 ## Current version
 
-**v0.2.4**
+**v0.2.5**
 
 The integration prioritizes reliable telemetry and conservative equipment control. Native control is enabled only for TCX equipment whose state and write behavior have been captured and validated; other equipment remains read-only.
 
@@ -18,7 +18,11 @@ The integration prioritizes reliable telemetry and conservative equipment contro
 - Pool temperature
 - Pool pump state
 - Pump RPM
+- Pump requested RPM
+- Pump operating phase (`Off`, `Priming`, `Running`, `Waterfall`, or `Transitioning`)
 - Pump preset
+- Controller mode, with the raw `systemMode` code retained as an attribute
+- Freeze Protection setpoint
 - Pool light state
 - Pool light color number
 - Pool light color name
@@ -30,7 +34,9 @@ The integration prioritizes reliable telemetry and conservative equipment contro
 - Connection type
 - Cloud, WebSocket transport, and WebSocket stream health
 - Connection/reconnect diagnostics
-- Last successful update, WebSocket update, and shadow update
+- Control status with the latest command outcome and failure details
+- Live-versus-cached data status and active source
+- Last successful update, WebSocket update, reported equipment state, and shadow update
 - Manual diagnostic reconnect button
 
 Controls are exposed separately from the read-only sensor points:
@@ -47,11 +53,15 @@ The Pool Light Power switch becomes available only when the controller reports a
 
 Pump RPM reports the active motor `cmdSpd`, including priming and other controller-selected runtime changes. Pump Manual Speed separately displays and writes the filtration controller's `manSpd`, so live RPM changes do not overwrite the writable setpoint. Pool Filtration Preset displays and writes only the `BD1_F` entry in `ecm0.spdList`; the complete list is sent as required by TCX while the Spa Filtration and Waterfall entries are preserved unchanged. Waterfall RPM defaults to 2850 RPM; turning Waterfall on confirms the feature relay and then applies this value to `filt0.manSpd`. Changing Waterfall RPM while the feature is active applies the new value immediately.
 
+Pump Requested RPM reports `ecm0.reqSpd` independently from the active command. Pump Operating Phase compares requested, commanded, and configured priming RPM and also considers the confirmed Waterfall relay, allowing priming and other speed transitions to be shown without changing the writable speed control.
+
+Controller Mode is deliberately read-only. The observed `systemMode = 1` value is reported as `Auto`; any other numeric value remains `Unknown (code N)` until its meaning is captured and confirmed. TCX Direct never forces the controller out of a local maintenance mode. Freeze Protection Setpoint exposes the reported `freezeSP` value without inferring an unconfirmed unit.
+
 The `tcx_direct.start_pump_at_speed` action targets the Pump Power switch and accepts an `rpm` value. It synchronizes the persistent Pool Filtration preset with a dedicated 45-second confirmation window and one fresh-shadow verification if the live confirmation is late. A stopped pump then receives only the normal `pool.st = 1` power command; no speed is combined with the start frame. TCX owns priming and settles at the prepared preset, after which TCX Direct aligns `manSpd` once the reported requested and commanded speeds both reach the scheduled RPM. Waterfall, a stopped pump, or an intervening manual command cancels that deferred alignment. For an already-running pump outside the priming transition, the action synchronizes both the Pool Filtration preset and manual speed immediately; a refresh during priming is deferred until the target RPM is reached. The action never changes Spa Filtration or Waterfall presets.
 
 When a manual-speed change briefly resets the motor state while filtration or Waterfall remains requested, Pump RPM holds its last valid nonzero reading for up to 90 seconds. A genuine pump-off command still reports 0 RPM immediately.
 
-Equipment air temperature and salt-water chlorinator level remain disabled by default because the tested TCX controller has not exposed trustworthy native values for those fields.
+Equipment air temperature remains disabled by default, although a dedicated live `air` sensor is decoded when the controller reports one; the unrelated `hubAir` sentinel is ignored. Salt-water chlorinator level also remains disabled by default until a confirmed native chlorinator object is observed.
 
 ## Reliability design
 
@@ -69,6 +79,8 @@ The integration is designed around the failure mode where an iAquaLink/TCX conne
 - Last-known normalized-state persistence
 - Full merged reported-state persistence across Home Assistant restarts
 - Separate connectivity diagnostics from equipment values
+- Explicit live/cached-state and last-reported-equipment-state diagnostics
+- Last command result and failure details independent from transport health
 
 ## Installation
 

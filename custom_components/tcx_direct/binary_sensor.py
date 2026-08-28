@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
@@ -18,6 +19,7 @@ from .entity import TCXEntity
 @dataclass(frozen=True, kw_only=True)
 class TCXBinaryDescription(BinarySensorEntityDescription):
     data_key: str
+    attribute_keys: tuple[str, ...] = ()
 
 
 BINARY_SENSORS = (
@@ -67,6 +69,14 @@ BINARY_SENSORS = (
         device_class=BinarySensorDeviceClass.CONNECTIVITY,
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
+    TCXBinaryDescription(
+        key="live_data",
+        data_key="live_data",
+        name="Live Data",
+        icon="mdi:database-sync",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        attribute_keys=("data_source", "using_cached_data"),
+    ),
 )
 
 
@@ -90,3 +100,13 @@ class TCXBinarySensor(TCXEntity, BinarySensorEntity):
     def is_on(self) -> bool | None:
         value = (self.coordinator.data or {}).get(self.entity_description.data_key)
         return value if isinstance(value, bool) else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        data = self.coordinator.data or {}
+        attributes = {
+            key: data[key]
+            for key in self.entity_description.attribute_keys
+            if data.get(key) is not None
+        }
+        return attributes or None

@@ -91,6 +91,7 @@ class TCXCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         parsed["pump_rpm"] = None
         parsed["pump"] = None
         parsed["pump_preset"] = None
+        parsed["pump_operating_phase"] = None
         if self._pump_zero_task is None:
             self.pump_zero_suppression_count += 1
             self.last_pump_zero_suppressed_at = datetime.now(timezone.utc).isoformat()
@@ -152,6 +153,7 @@ class TCXCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         }
 
     def _build_data(self) -> dict[str, Any]:
+        live_data = None if not self.normalized else not self.using_cached_data
         return {
             **self.normalized,
             "connected": self.client.healthy,
@@ -159,6 +161,8 @@ class TCXCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "websocket_stream_healthy": self.client.websocket_stream_healthy,
             "cloud_reachable": self.client.cloud_reachable,
             "using_cached_data": self.using_cached_data,
+            "live_data": live_data,
+            "data_source": self.source,
             "last_successful_update": self.last_successful_update,
             "last_websocket_message": self.client.last_ws_message_at,
             "last_websocket_state": self.client.last_ws_state_at,
@@ -169,4 +173,15 @@ class TCXCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "watchdog_reconnect_count": self.client.watchdog_reconnect_count,
             "source": self.source,
             "last_error": self.client.last_error,
+            "control_status": self.client.control_status,
+            "control_command_count": self.client.control_command_count,
+            "control_success_count": self.client.control_success_count,
+            "control_failure_count": self.client.control_failure_count,
+            "last_control_command_at": self.client.last_control_at,
+            "last_control_command": self.client.last_control_description,
+            "last_control_error": self.client.last_control_error,
+            "last_control_confirmation_seconds": (self.client.last_control_confirmation_seconds),
+            "last_control_failure_at": self.client.last_control_failure_at,
+            "last_control_failure_command": (self.client.last_control_failure_description),
+            "last_control_failure_error": self.client.last_control_failure_error,
         }

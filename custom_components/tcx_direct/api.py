@@ -223,6 +223,45 @@ def _coerce_bool(value: Any) -> bool | None:
     return None
 
 
+def _numeric_code(value: Any) -> int | float | None:
+    """Return a stable integer code when the reported number is integral."""
+    number = _coerce_number(value)
+    if number is None:
+        return None
+    return int(number) if number.is_integer() else number
+
+
+def _pump_operating_phase(
+    pump_state: bool | None,
+    requested_rpm: float | None,
+    commanded_rpm: float | None,
+    priming_rpm: float | None,
+    waterfall_state: bool | None,
+) -> str | None:
+    """Describe the observed motor phase without inventing controller modes."""
+    if pump_state is None:
+        return None
+    if pump_state is False:
+        return "Off"
+    if waterfall_state is True:
+        return "Waterfall"
+    if (
+        commanded_rpm is not None
+        and requested_rpm is not None
+        and priming_rpm is not None
+        and round(commanded_rpm) == round(priming_rpm)
+        and round(commanded_rpm) != round(requested_rpm)
+    ):
+        return "Priming"
+    if (
+        commanded_rpm is not None
+        and requested_rpm is not None
+        and round(commanded_rpm) != round(requested_rpm)
+    ):
+        return "Transitioning"
+    return "Running"
+
+
 def _find_terminal(
     flat: list[tuple[tuple[str, ...], Any]],
     aliases: set[str],
@@ -481,7 +520,8 @@ def normalize_tcx_state(reported: dict[str, Any]) -> dict[str, Any]:
     filt0 = _mapping(reported.get("filt0"))
     pump_obj = ecm0 or filt0
     pump_state = _coerce_bool(pump_obj.get("st"))
-    pump_rpm = _coerce_number(ecm0.get("cmdSpd"))
+    commanded_rpm = _coerce_number(ecm0.get("cmdSpd"))
+    pump_rpm = commanded_rpm
     if pump_rpm is None:
         pump_rpm = _coerce_number(ecm0.get("reqSpd"))
     if pump_rpm is None:
@@ -498,7 +538,8 @@ def normalize_tcx_state(reported: dict[str, Any]) -> dict[str, Any]:
     if max_rpm is None:
         max_rpm = _coerce_number(filt0.get("maxSpd"))
 
-    requested_rpm = _coerce_number(ecm0.get("reqSpd"))
+    reported_requested_rpm = _coerce_number(ecm0.get("reqSpd"))
+    requested_rpm = reported_requested_rpm
     if requested_rpm is None:
         requested_rpm = _coerce_number(ecm0.get("manSpd"))
     if requested_rpm is None:
@@ -632,6 +673,15 @@ def normalize_tcx_state(reported: dict[str, Any]) -> dict[str, Any]:
         _coerce_bool(waterfall_feature[1].get("st")) if waterfall_feature is not None else None
     )
 
+    priming_rpm = _coerce_number(ecm0.get("prmSpd"))
+    pump_operating_phase = _pump_operating_phase(
+        pump_state,
+        reported_requested_rpm,
+        commanded_rpm,
+        priming_rpm,
+        waterfall_state,
+    )
+
     # ---- Useful diagnostics/configuration ---------------------------------
     wifi_rssi = _coerce_number(reported.get("connectionRSSI"))
     water_setpoint = None
@@ -639,11 +689,22 @@ def normalize_tcx_state(reported: dict[str, Any]) -> dict[str, Any]:
     if "waterTempSet" in tsp:
         water_setpoint = _tcx_temperature(tsp.get("waterTempSet"))
 
+    system_mode_code = _numeric_code(reported.get("systemMode"))
+    controller_mode = None
+    if system_mode_code == 1:
+        controller_mode = "Auto"
+    elif system_mode_code is not None:
+        controller_mode = f"Unknown (code {system_mode_code})"
+
+    freeze_protection_setpoint = _coerce_number(reported.get("freezeSP"))
+
     return {
         "pool_temperature": pool_temperature,
         "pool_temperature_setpoint": water_setpoint,
         "air_temperature": air_temperature,
         "pump_rpm": pump_rpm,
+        "pump_requested_rpm": reported_requested_rpm,
+        "pump_operating_phase": pump_operating_phase,
         "pump_min_rpm": min_rpm,
         "pump_max_rpm": max_rpm,
         "pump_speed_setpoint": pump_speed_setpoint,
@@ -661,6 +722,9 @@ def normalize_tcx_state(reported: dict[str, Any]) -> dict[str, Any]:
         "pump": pump_state,
         "light": light_state,
         "waterfall": waterfall_state,
+        "controller_mode": controller_mode,
+        "system_mode_code": system_mode_code,
+        "freeze_protection_setpoint": freeze_protection_setpoint,
         "wifi_rssi": wifi_rssi,
         "firmware_version": reported.get("firmwareVersion"),
         "connection_type": reported.get("connectionType"),
@@ -1154,6 +1218,7 @@ class TCXClient:
         finally:
             if self._pending_control is pending:
                 self._pending_control = None
+            await self._notify_status()
 
     async def _async_cancel_post_prime_sync(self, result: str) -> None:
         """Cancel a pending startup synchronization without touching pump state."""
@@ -1571,6 +1636,19 @@ class TCXClient:
     def recent_desired_payloads(self) -> list[dict[str, Any]]:
         """Return recent desired-state echoes for control-protocol mapping."""
         return [deepcopy(item) for item in self._recent_desired_payloads]
+
+    @property
+    def control_status(self) -> str:
+        """Return the latest Home Assistant control outcome."""
+        if self._pending_control is not None:
+            return "Pending"
+        if self.control_command_count == 0:
+            return "No commands"
+        if self.last_control_error is not None:
+            return "Failed"
+        if self.control_success_count + self.control_failure_count < self.control_command_count:
+            return "Unknown"
+        return "Confirmed"
 
     @property
     def websocket_stream_healthy(self) -> bool:

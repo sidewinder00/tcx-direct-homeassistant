@@ -2,6 +2,19 @@
 
 All notable changes to Jandy TCX Direct are documented here.
 
+## [0.2.5] - 2026-08-28
+
+### Added
+- Add a read-only Controller Mode sensor. The observed `systemMode = 1` value reports `Auto`; unconfirmed values report `Unknown (code N)` and retain the raw code as an attribute.
+- Add Pump Requested RPM and a derived Pump Operating Phase sensor that distinguishes Off, Priming, Running, Waterfall, and other speed transitions.
+- Add the reported Freeze Protection setpoint as a read-only diagnostic sensor.
+- Add Control Status with command totals, latest command, confirmation latency, and retained failure details as attributes.
+- Add Last Reported Equipment State and a Live Data binary diagnostic with source/cache attributes.
+
+### Changed
+- Publish coordinator updates when commands finish so Control Status reflects confirmation failures even when TCX sends no reported-state response.
+- Preserve the previous Pump Operating Phase while the existing transient-zero filter holds a contradictory stopped-motor update.
+
 ## [0.2.4] - 2026-08-28
 
 ### Fixed

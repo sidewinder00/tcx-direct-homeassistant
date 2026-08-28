@@ -23,7 +23,7 @@ def test_entity_categories_use_home_assistant_enum() -> None:
                 continue
             categories.append((path, node.lineno, ast.unparse(node.value)))
 
-    assert len(categories) == 17
+    assert len(categories) == 21
     assert all(
         expression == "EntityCategory.DIAGNOSTIC" for _path, _line, expression in categories
     ), categories
@@ -37,6 +37,14 @@ def test_status_points_and_writable_controls_remain_separate() -> None:
     assert 'key="pump"' in binary_sensor
     assert 'key="light"' in binary_sensor
     assert 'key="waterfall_status"' in binary_sensor
+    assert 'key="live_data"' in binary_sensor
+    sensor = Path("custom_components/tcx_direct/sensor.py").read_text()
+    assert 'key="controller_mode"' in sensor
+    assert 'key="pump_operating_phase"' in sensor
+    assert 'key="pump_requested_rpm"' in sensor
+    assert 'key="control_status"' in sensor
+    assert 'key="freeze_protection_setpoint"' in sensor
+    assert 'key="last_reported_equipment_state"' in sensor
     assert "TCXPumpPowerSwitch" in switch
     assert "TCXPoolLightSwitch" in switch
     assert "TCXWaterfallSwitch" in switch
