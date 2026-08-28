@@ -7,6 +7,7 @@ import pytest
 from custom_components.tcx_direct import api
 from custom_components.tcx_direct.const import (
     CONTROL_CONFIRM_TIMEOUT,
+    POOL_FILTRATION_CONFIRM_TIMEOUT,
     PUMP_POWER_CONFIRM_TIMEOUT,
 )
 
@@ -509,6 +510,8 @@ def test_start_pump_at_speed_sets_pool_preset_then_starts_normally(monkeypatch) 
             if "pool" in desired:
                 client.reported["pool"]["st"] = desired["pool"]["st"]
                 client.reported["ecm0"]["st"] = desired["pool"]["st"]
+                client.reported["ecm0"]["reqSpd"] = 2575
+                client.reported["ecm0"]["cmdSpd"] = 2500
             client._resolve_pending_control()
 
     websocket = FakeWebSocket()
@@ -553,11 +556,287 @@ def test_start_pump_at_speed_sets_pool_preset_then_starts_normally(monkeypatch) 
         },
         {"pool": {"st": 1}},
     ]
-    assert captured_timeouts == [CONTROL_CONFIRM_TIMEOUT, PUMP_POWER_CONFIRM_TIMEOUT]
+    assert captured_timeouts == [
+        POOL_FILTRATION_CONFIRM_TIMEOUT,
+        PUMP_POWER_CONFIRM_TIMEOUT,
+    ]
     assert client.control_command_counts["pool filtration preset"] == 1
     assert client.control_command_counts["pump power state"] == 1
     assert client.control_success_counts["pool filtration preset"] == 1
     assert client.control_success_counts["pump power state"] == 1
+    assert client.post_prime_sync_scheduled_count == 1
+
+
+def test_running_schedule_change_syncs_preset_and_manual_speed_without_power() -> None:
+    client = make_client()
+    client.user_id = "12345"
+    client.websocket_connected = True
+    client.reported = {
+        "pool": {"fr": "Pool Filtration", "et": "V_POS", "app": "POOL_M", "st": 1},
+        "filt0": {
+            "fr": "Filtration",
+            "et": "F_CTRL",
+            "app": "FILT",
+            "manSpd": 1100,
+            "minSpd": 600,
+            "maxSpd": 3450,
+        },
+        "ecm0": {
+            "st": 1,
+            "reqSpd": 1100,
+            "cmdSpd": 1100,
+            "minSpd": 600,
+            "maxSpd": 3450,
+            "spdList": [
+                {"name": "Pool Filtration", "speed": 1100, "app": "BD1_F", "ar": 1},
+                {"name": "Spa Filtration", "speed": 2525, "app": "BD2_F", "ar": 2},
+                {"name": "Waterfall", "speed": 2850, "app": "WF", "ar": 3},
+            ],
+        },
+    }
+
+    class FakeWebSocket:
+        closed = False
+
+        def __init__(self) -> None:
+            self.messages: list[dict[str, object]] = []
+
+        async def send_json(self, message: dict[str, object]) -> None:
+            self.messages.append(message)
+            desired = message["payload"]["state"]["desired"]
+            if "ecm0" in desired:
+                client.reported["ecm0"]["spdList"] = desired["ecm0"]["spdList"]
+            if "filt0" in desired:
+                client.reported["filt0"]["manSpd"] = desired["filt0"]["manSpd"]
+            client._resolve_pending_control()
+
+    websocket = FakeWebSocket()
+    client._ws = websocket  # type: ignore[assignment]
+
+    asyncio.run(client.async_start_pump_at_speed(2600))
+
+    desired_frames = [message["payload"]["state"]["desired"] for message in websocket.messages]
+    assert desired_frames == [
+        {
+            "ecm0": {
+                "spdList": [
+                    {
+                        "name": "Pool Filtration",
+                        "speed": 2600,
+                        "app": "BD1_F",
+                        "ar": 1,
+                    },
+                    {
+                        "name": "Spa Filtration",
+                        "speed": 2525,
+                        "app": "BD2_F",
+                        "ar": 2,
+                    },
+                    {
+                        "name": "Waterfall",
+                        "speed": 2850,
+                        "app": "WF",
+                        "ar": 3,
+                    },
+                ]
+            }
+        },
+        {"filt0": {"manSpd": 2600}},
+    ]
+    assert client.post_prime_sync_scheduled_count == 0
+
+
+def test_cold_start_aligns_manual_speed_only_after_priming(monkeypatch) -> None:
+    client = make_client()
+    client.user_id = "12345"
+    client.websocket_connected = True
+    client.reported = {
+        "pool": {"fr": "Pool Filtration", "et": "V_POS", "app": "POOL_M", "st": 0},
+        "filt0": {
+            "fr": "Filtration",
+            "et": "F_CTRL",
+            "app": "FILT",
+            "manSpd": 1100,
+            "minSpd": 600,
+            "maxSpd": 3450,
+        },
+        "ecm0": {
+            "st": 0,
+            "minSpd": 600,
+            "maxSpd": 3450,
+            "spdList": [
+                {"name": "Pool Filtration", "speed": 1100, "app": "BD1_F", "ar": 1},
+                {"name": "Spa Filtration", "speed": 2525, "app": "BD2_F", "ar": 2},
+                {"name": "Waterfall", "speed": 2850, "app": "WF", "ar": 3},
+            ],
+        },
+        "fcr0": {"fr": "Waterfall", "et": "FRLY", "app": "WF", "st": 0},
+    }
+
+    class FakeWebSocket:
+        closed = False
+
+        def __init__(self) -> None:
+            self.messages: list[dict[str, object]] = []
+
+        async def send_json(self, message: dict[str, object]) -> None:
+            self.messages.append(message)
+            desired = message["payload"]["state"]["desired"]
+            if "ecm0" in desired:
+                client.reported["ecm0"]["spdList"] = desired["ecm0"]["spdList"]
+            if "pool" in desired:
+                client.reported["pool"]["st"] = 1
+                client.reported["ecm0"].update({"st": 1, "reqSpd": 2575, "cmdSpd": 2500})
+            if "filt0" in desired:
+                client.reported["filt0"]["manSpd"] = desired["filt0"]["manSpd"]
+            client._resolve_pending_control()
+
+    websocket = FakeWebSocket()
+    client._ws = websocket  # type: ignore[assignment]
+    monkeypatch.setattr(api, "POST_PRIME_SYNC_INTERVAL", 0)
+
+    async def run_scenario() -> None:
+        await client.async_start_pump_at_speed(2575)
+        assert [message["payload"]["state"]["desired"] for message in websocket.messages][-1] == {
+            "pool": {"st": 1}
+        }
+        client.reported["ecm0"].update({"reqSpd": 2575, "cmdSpd": 2575})
+        task = client._post_prime_sync_task
+        assert task is not None
+        await task
+
+    asyncio.run(run_scenario())
+
+    desired_frames = [message["payload"]["state"]["desired"] for message in websocket.messages]
+    assert desired_frames[-1] == {"filt0": {"manSpd": 2575}}
+    assert client.post_prime_sync_success_count == 1
+    assert client.last_post_prime_sync_result == "manual_speed_aligned"
+
+
+def test_schedule_refresh_during_priming_defers_manual_speed(monkeypatch) -> None:
+    client = make_client()
+    client.user_id = "12345"
+    client.websocket_connected = True
+    client.reported = {
+        "pool": {"fr": "Pool Filtration", "et": "V_POS", "app": "POOL_M", "st": 1},
+        "filt0": {
+            "fr": "Filtration",
+            "et": "F_CTRL",
+            "app": "FILT",
+            "manSpd": 1100,
+            "minSpd": 600,
+            "maxSpd": 3450,
+        },
+        "ecm0": {
+            "st": 1,
+            "reqSpd": 2575,
+            "cmdSpd": 2500,
+            "minSpd": 600,
+            "maxSpd": 3450,
+            "spdList": [
+                {"name": "Pool Filtration", "speed": 2575, "app": "BD1_F", "ar": 1},
+                {"name": "Spa Filtration", "speed": 2525, "app": "BD2_F", "ar": 2},
+                {"name": "Waterfall", "speed": 2850, "app": "WF", "ar": 3},
+            ],
+        },
+        "fcr0": {"fr": "Waterfall", "et": "FRLY", "app": "WF", "st": 0},
+    }
+
+    class FakeWebSocket:
+        closed = False
+
+        def __init__(self) -> None:
+            self.messages: list[dict[str, object]] = []
+
+        async def send_json(self, message: dict[str, object]) -> None:
+            self.messages.append(message)
+            desired = message["payload"]["state"]["desired"]
+            if "filt0" in desired:
+                client.reported["filt0"]["manSpd"] = desired["filt0"]["manSpd"]
+            client._resolve_pending_control()
+
+    websocket = FakeWebSocket()
+    client._ws = websocket  # type: ignore[assignment]
+    monkeypatch.setattr(api, "POST_PRIME_SYNC_INTERVAL", 0)
+
+    async def run_scenario() -> None:
+        await client.async_start_pump_at_speed(2575)
+        assert websocket.messages == []
+        client.reported["ecm0"]["cmdSpd"] = 2575
+        task = client._post_prime_sync_task
+        assert task is not None
+        await task
+
+    asyncio.run(run_scenario())
+
+    assert [message["payload"]["state"]["desired"] for message in websocket.messages] == [
+        {"filt0": {"manSpd": 2575}}
+    ]
+    assert client.post_prime_sync_success_count == 1
+
+
+def test_pool_preset_timeout_recovers_from_fresh_shadow_before_power(monkeypatch) -> None:
+    client = make_client()
+    client.user_id = "12345"
+    client.websocket_connected = True
+    client.reported = {
+        "pool": {"fr": "Pool Filtration", "et": "V_POS", "app": "POOL_M", "st": 0},
+        "filt0": {
+            "fr": "Filtration",
+            "et": "F_CTRL",
+            "app": "FILT",
+            "manSpd": 1100,
+            "minSpd": 600,
+            "maxSpd": 3450,
+        },
+        "ecm0": {
+            "st": 0,
+            "minSpd": 600,
+            "maxSpd": 3450,
+            "spdList": [
+                {"name": "Pool Filtration", "speed": 1100, "app": "BD1_F", "ar": 1},
+                {"name": "Spa Filtration", "speed": 2525, "app": "BD2_F", "ar": 2},
+                {"name": "Waterfall", "speed": 2850, "app": "WF", "ar": 3},
+            ],
+        },
+    }
+
+    class FakeWebSocket:
+        closed = False
+
+        def __init__(self) -> None:
+            self.messages: list[dict[str, object]] = []
+
+        async def send_json(self, message: dict[str, object]) -> None:
+            self.messages.append(message)
+            desired = message["payload"]["state"]["desired"]
+            if "pool" in desired:
+                client.reported["pool"]["st"] = 1
+                client.reported["ecm0"].update({"st": 1, "reqSpd": 2600, "cmdSpd": 2500})
+                client._resolve_pending_control()
+
+    websocket = FakeWebSocket()
+    client._ws = websocket  # type: ignore[assignment]
+    monkeypatch.setattr(api, "POOL_FILTRATION_CONFIRM_TIMEOUT", 0.001)
+
+    async def fake_shadow() -> dict[str, object]:
+        desired = websocket.messages[0]["payload"]["state"]["desired"]
+        client.reported["ecm0"]["spdList"] = desired["ecm0"]["spdList"]
+        return {}
+
+    client.async_get_shadow = fake_shadow  # type: ignore[method-assign]
+
+    async def run_scenario() -> None:
+        await client.async_start_pump_at_speed(2600)
+        await client._async_cancel_post_prime_sync("test_complete")
+
+    asyncio.run(run_scenario())
+
+    desired_frames = [message["payload"]["state"]["desired"] for message in websocket.messages]
+    assert desired_frames[-1] == {"pool": {"st": 1}}
+    assert client.control_confirmation_refresh_count == 1
+    assert client.control_late_confirmation_count == 1
+    assert client.control_failure_count == 0
 
 
 def test_start_pump_at_speed_enforces_reported_limits() -> None:

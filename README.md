@@ -9,7 +9,7 @@ TCX Direct connects Home Assistant directly to the iAquaLink/Zodiac cloud. It do
 
 ## Current version
 
-**v0.2.3**
+**v0.2.4**
 
 The integration prioritizes reliable telemetry and conservative equipment control. Native control is enabled only for TCX equipment whose state and write behavior have been captured and validated; other equipment remains read-only.
 
@@ -47,7 +47,7 @@ The Pool Light Power switch becomes available only when the controller reports a
 
 Pump RPM reports the active motor `cmdSpd`, including priming and other controller-selected runtime changes. Pump Manual Speed separately displays and writes the filtration controller's `manSpd`, so live RPM changes do not overwrite the writable setpoint. Pool Filtration Preset displays and writes only the `BD1_F` entry in `ecm0.spdList`; the complete list is sent as required by TCX while the Spa Filtration and Waterfall entries are preserved unchanged. Waterfall RPM defaults to 2850 RPM; turning Waterfall on confirms the feature relay and then applies this value to `filt0.manSpd`. Changing Waterfall RPM while the feature is active applies the new value immediately.
 
-The `tcx_direct.start_pump_at_speed` action targets the Pump Power switch and accepts an `rpm` value. It first writes and confirms the persistent Pool Filtration preset, then sends a normal pump-on command without a manual-speed value. TCX therefore owns the complete startup sequence and transitions from its configured priming speed directly to the requested Pool Filtration preset. The action does not change the Spa Filtration or Waterfall presets.
+The `tcx_direct.start_pump_at_speed` action targets the Pump Power switch and accepts an `rpm` value. It synchronizes the persistent Pool Filtration preset with a dedicated 45-second confirmation window and one fresh-shadow verification if the live confirmation is late. A stopped pump then receives only the normal `pool.st = 1` power command; no speed is combined with the start frame. TCX owns priming and settles at the prepared preset, after which TCX Direct aligns `manSpd` once the reported requested and commanded speeds both reach the scheduled RPM. Waterfall, a stopped pump, or an intervening manual command cancels that deferred alignment. For an already-running pump outside the priming transition, the action synchronizes both the Pool Filtration preset and manual speed immediately; a refresh during priming is deferred until the target RPM is reached. The action never changes Spa Filtration or Waterfall presets.
 
 When a manual-speed change briefly resets the motor state while filtration or Waterfall remains requested, Pump RPM holds its last valid nonzero reading for up to 90 seconds. A genuine pump-off command still reports 0 RPM immediately.
 

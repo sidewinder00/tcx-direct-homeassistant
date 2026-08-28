@@ -8,6 +8,9 @@ from homeassistant.core import HomeAssistant
 from . import TCXConfigEntry
 from .const import (
     CONTROL_CONFIRM_TIMEOUT,
+    POOL_FILTRATION_CONFIRM_TIMEOUT,
+    POST_PRIME_SYNC_INTERVAL,
+    POST_PRIME_SYNC_TIMEOUT,
     PUMP_POWER_CONFIRM_TIMEOUT,
     PUMP_ZERO_GRACE_SECONDS,
 )
@@ -105,6 +108,7 @@ async def async_get_config_entry_diagnostics(
         },
         "control": {
             "default_confirmation_timeout_seconds": CONTROL_CONFIRM_TIMEOUT,
+            "pool_filtration_confirmation_timeout_seconds": (POOL_FILTRATION_CONFIRM_TIMEOUT),
             "pump_power_confirmation_timeout_seconds": PUMP_POWER_CONFIRM_TIMEOUT,
             "command_count": client.control_command_count,
             "success_count": client.control_success_count,
@@ -116,6 +120,27 @@ async def async_get_config_entry_diagnostics(
             "last_command": client.last_control_description,
             "last_error": client.last_control_error,
             "last_frame": client.last_control_frame,
+            "last_confirmation_seconds": client.last_control_confirmation_seconds,
+            "confirmation_seconds": dict(client.control_confirmation_seconds),
+            "confirmation_refresh_count": client.control_confirmation_refresh_count,
+            "late_confirmation_count": client.control_late_confirmation_count,
+            "last_failure_at": client.last_control_failure_at,
+            "last_failure_command": client.last_control_failure_description,
+            "last_failure_error": client.last_control_failure_error,
+        },
+        "post_prime_sync": {
+            "interval_seconds": POST_PRIME_SYNC_INTERVAL,
+            "timeout_seconds": POST_PRIME_SYNC_TIMEOUT,
+            "state": client.post_prime_sync_state,
+            "target_rpm": client.post_prime_sync_target,
+            "scheduled_count": client.post_prime_sync_scheduled_count,
+            "success_count": client.post_prime_sync_success_count,
+            "cancel_count": client.post_prime_sync_cancel_count,
+            "skip_count": client.post_prime_sync_skip_count,
+            "timeout_count": client.post_prime_sync_timeout_count,
+            "last_update_at": client.last_post_prime_sync_at,
+            "last_result": client.last_post_prime_sync_result,
+            "last_error": client.last_post_prime_sync_error,
         },
         "authentication": {
             "full_login_count": client.full_login_count,

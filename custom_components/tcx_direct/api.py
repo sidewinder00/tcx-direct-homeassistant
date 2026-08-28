@@ -25,6 +25,9 @@ from .const import (
     CONTROL_NAMESPACE,
     IAQUALINK_API,
     MAX_WEBSOCKET_SESSION,
+    POOL_FILTRATION_CONFIRM_TIMEOUT,
+    POST_PRIME_SYNC_INTERVAL,
+    POST_PRIME_SYNC_TIMEOUT,
     PUMP_POWER_CONFIRM_TIMEOUT,
     RECENT_WS_STRUCTURES,
     RECONNECT_MAX,
@@ -750,6 +753,7 @@ class TCXClient:
         self._auth_lock = asyncio.Lock()
         self._control_lock = asyncio.Lock()
         self._pending_control: _PendingControl | None = None
+        self._post_prime_sync_task: asyncio.Task[None] | None = None
 
         self.control_command_count = 0
         self.control_success_count = 0
@@ -761,6 +765,24 @@ class TCXClient:
         self.last_control_description: str | None = None
         self.last_control_error: str | None = None
         self.last_control_frame: dict[str, Any] | None = None
+        self.last_control_confirmation_seconds: float | None = None
+        self.control_confirmation_seconds: dict[str, float] = {}
+        self.control_confirmation_refresh_count = 0
+        self.control_late_confirmation_count = 0
+        self.last_control_failure_at: str | None = None
+        self.last_control_failure_description: str | None = None
+        self.last_control_failure_error: str | None = None
+
+        self.post_prime_sync_scheduled_count = 0
+        self.post_prime_sync_success_count = 0
+        self.post_prime_sync_cancel_count = 0
+        self.post_prime_sync_skip_count = 0
+        self.post_prime_sync_timeout_count = 0
+        self.post_prime_sync_target: int | None = None
+        self.post_prime_sync_state = "idle"
+        self.last_post_prime_sync_at: str | None = None
+        self.last_post_prime_sync_result: str | None = None
+        self.last_post_prime_sync_error: str | None = None
 
     def set_callbacks(
         self,
@@ -997,6 +1019,7 @@ class TCXClient:
 
     async def async_stop(self) -> None:
         self._stopping = True
+        await self._async_cancel_post_prime_sync("integration_stopped")
         self._reconnect_requested.set()
         if self._ws is not None and not self._ws.closed:
             await self._ws.close()
@@ -1033,12 +1056,35 @@ class TCXClient:
         if not pending.future.done():
             pending.future.set_exception(TCXConnectionError(message))
 
+    def _record_control_failure(self, description: str, message: str) -> None:
+        """Retain both current and historical control failure details."""
+        self.control_failure_count += 1
+        self.control_failure_counts[description] = (
+            self.control_failure_counts.get(description, 0) + 1
+        )
+        self.last_control_error = message
+        self.last_control_failure_at = _utc_now_iso()
+        self.last_control_failure_description = description
+        self.last_control_failure_error = message
+
+    def _record_control_success(self, description: str, started: float) -> None:
+        """Record a confirmed command and its end-to-end confirmation latency."""
+        elapsed = round(max(0.0, time.monotonic() - started), 3)
+        self.control_success_count += 1
+        self.control_success_counts[description] = (
+            self.control_success_counts.get(description, 0) + 1
+        )
+        self.last_control_confirmation_seconds = elapsed
+        self.control_confirmation_seconds[description] = elapsed
+        self.last_control_error = None
+
     async def _async_send_control(
         self,
         desired: dict[str, Any],
         description: str,
         predicate: Callable[[dict[str, Any]], bool],
         confirmation_timeout: float = CONTROL_CONFIRM_TIMEOUT,
+        refresh_on_timeout: bool = False,
     ) -> None:
         """Send one serialized TCX command and require reported confirmation."""
         ws = self._ws
@@ -1068,49 +1114,172 @@ class TCXClient:
         self.last_control_description = description
         self.last_control_error = None
         self.last_control_frame = sanitize_diagnostics(message)
+        started = time.monotonic()
 
         try:
             await ws.send_json(message)
             await asyncio.wait_for(future, timeout=confirmation_timeout)
         except asyncio.TimeoutError as err:
+            if refresh_on_timeout:
+                self.control_confirmation_refresh_count += 1
+                try:
+                    await self.async_get_shadow()
+                    await self._notify_state("shadow")
+                except TCXError as refresh_error:
+                    _LOGGER.debug(
+                        "Unable to refresh TCX state after %s confirmation timeout: %s",
+                        description,
+                        refresh_error,
+                    )
+                if predicate(self.reported):
+                    self.control_late_confirmation_count += 1
+                    self._record_control_success(description, started)
+                    return
             message_text = (
                 f"TCX did not confirm {description} within {confirmation_timeout:g} seconds"
             )
-            self.control_failure_count += 1
-            self.control_failure_counts[description] = (
-                self.control_failure_counts.get(description, 0) + 1
-            )
-            self.last_control_error = message_text
+            self._record_control_failure(description, message_text)
             raise TCXConnectionError(message_text) from err
         except asyncio.CancelledError:
             raise
         except TCXError as err:
-            self.control_failure_count += 1
-            self.control_failure_counts[description] = (
-                self.control_failure_counts.get(description, 0) + 1
-            )
-            self.last_control_error = str(err)
+            self._record_control_failure(description, str(err))
             raise
         except (aiohttp.ClientError, ConnectionError, RuntimeError) as err:
             message_text = f"Unable to send TCX {description} command: {err}"
-            self.control_failure_count += 1
-            self.control_failure_counts[description] = (
-                self.control_failure_counts.get(description, 0) + 1
-            )
-            self.last_control_error = message_text
+            self._record_control_failure(description, message_text)
             raise TCXConnectionError(message_text) from err
         else:
-            self.control_success_count += 1
-            self.control_success_counts[description] = (
-                self.control_success_counts.get(description, 0) + 1
-            )
-            self.last_control_error = None
+            self._record_control_success(description, started)
         finally:
             if self._pending_control is pending:
                 self._pending_control = None
 
+    async def _async_cancel_post_prime_sync(self, result: str) -> None:
+        """Cancel a pending startup synchronization without touching pump state."""
+        task = self._post_prime_sync_task
+        self._post_prime_sync_task = None
+        if task is None or task.done():
+            return
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        self.post_prime_sync_cancel_count += 1
+        self.post_prime_sync_state = "cancelled"
+        self.last_post_prime_sync_at = _utc_now_iso()
+        self.last_post_prime_sync_result = result
+        self.last_post_prime_sync_error = None
+
+    def _schedule_post_prime_sync(self, requested: int, initial_manual: float | None) -> None:
+        """Schedule one non-blocking manual-setpoint alignment after TCX priming."""
+        self.post_prime_sync_scheduled_count += 1
+        self.post_prime_sync_target = requested
+        self.post_prime_sync_state = "waiting"
+        self.last_post_prime_sync_at = _utc_now_iso()
+        self.last_post_prime_sync_result = None
+        self.last_post_prime_sync_error = None
+        task = asyncio.create_task(
+            self._async_post_prime_sync(requested, initial_manual),
+            name=f"tcx_direct_post_prime_{requested}",
+        )
+        self._post_prime_sync_task = task
+        task.add_done_callback(self._post_prime_sync_done)
+
+    def _post_prime_sync_done(self, task: asyncio.Task[None]) -> None:
+        if self._post_prime_sync_task is task:
+            self._post_prime_sync_task = None
+
+    def _finish_post_prime_sync(
+        self,
+        state: str,
+        result: str,
+        error: str | None = None,
+    ) -> None:
+        self.post_prime_sync_state = state
+        self.last_post_prime_sync_at = _utc_now_iso()
+        self.last_post_prime_sync_result = result
+        self.last_post_prime_sync_error = error
+
+    async def _async_post_prime_sync(
+        self,
+        requested: int,
+        initial_manual: float | None,
+    ) -> None:
+        """Align manSpd once TCX has left priming and reached Pool Filtration."""
+        deadline = time.monotonic() + POST_PRIME_SYNC_TIMEOUT
+        try:
+            while time.monotonic() < deadline:
+                await asyncio.sleep(POST_PRIME_SYNC_INTERVAL)
+
+                pool_mode = _find_pool_mode(self.reported)
+                if pool_mode is None or _coerce_bool(pool_mode[1].get("st")) is not True:
+                    self.post_prime_sync_skip_count += 1
+                    self._finish_post_prime_sync("skipped", "pump_not_running")
+                    return
+
+                waterfall = _find_waterfall_feature(self.reported)
+                if waterfall is not None and _coerce_bool(waterfall[1].get("st")) is True:
+                    self.post_prime_sync_skip_count += 1
+                    self._finish_post_prime_sync("skipped", "waterfall_active")
+                    return
+
+                controller = _find_filter_controller(self.reported)
+                if controller is None:
+                    continue
+                manual = _coerce_number(controller[1].get("manSpd"))
+                if (
+                    initial_manual is not None
+                    and manual is not None
+                    and round(manual) not in {round(initial_manual), requested}
+                ):
+                    self.post_prime_sync_skip_count += 1
+                    self._finish_post_prime_sync("skipped", "manual_speed_changed")
+                    return
+
+                ecm0 = _mapping(self.reported.get("ecm0"))
+                requested_speed = _coerce_number(ecm0.get("reqSpd"))
+                commanded_speed = _coerce_number(ecm0.get("cmdSpd"))
+                if (
+                    requested_speed is None
+                    or commanded_speed is None
+                    or round(requested_speed) != requested
+                    or round(commanded_speed) != requested
+                ):
+                    continue
+
+                async with self._control_lock:
+                    pool_mode = _find_pool_mode(self.reported)
+                    waterfall = _find_waterfall_feature(self.reported)
+                    ecm0 = _mapping(self.reported.get("ecm0"))
+                    if (
+                        pool_mode is None
+                        or _coerce_bool(pool_mode[1].get("st")) is not True
+                        or (waterfall is not None and _coerce_bool(waterfall[1].get("st")) is True)
+                        or round(_coerce_number(ecm0.get("reqSpd")) or -1) != requested
+                        or round(_coerce_number(ecm0.get("cmdSpd")) or -1) != requested
+                    ):
+                        continue
+                    await self._async_set_pump_speed_locked(requested)
+
+                self.post_prime_sync_success_count += 1
+                self._finish_post_prime_sync("complete", "manual_speed_aligned")
+                return
+        except asyncio.CancelledError:
+            raise
+        except TCXError as err:
+            self._finish_post_prime_sync("failed", "manual_speed_write_failed", str(err))
+            return
+        except Exception as err:  # defensive background task: never fail silently
+            _LOGGER.exception("Unexpected TCX post-prime synchronization failure")
+            self._finish_post_prime_sync("failed", "unexpected_error", str(err))
+            return
+
+        self.post_prime_sync_timeout_count += 1
+        self._finish_post_prime_sync("timed_out", "scheduled_speed_not_observed")
+
     async def async_set_waterfall(self, enabled: bool) -> None:
         """Set the captured TCX waterfall feature and await reported state."""
+        if enabled:
+            await self._async_cancel_post_prime_sync("waterfall_commanded")
         async with self._control_lock:
             feature = _find_waterfall_feature(self.reported)
             if feature is None:
@@ -1147,6 +1316,8 @@ class TCXClient:
 
     async def async_set_pump_power(self, enabled: bool) -> None:
         """Set the confirmed Pool Filtration mode and await reported state."""
+        if not enabled:
+            await self._async_cancel_post_prime_sync("pump_off_commanded")
         async with self._control_lock:
             await self._async_set_pump_power_locked(enabled)
 
@@ -1171,13 +1342,46 @@ class TCXClient:
         )
 
     async def async_start_pump_at_speed(self, speed: float) -> None:
-        """Set the Pool Filtration preset, then start the pump normally."""
+        """Apply a scheduled speed without combining RPM and power commands."""
+        await self._async_cancel_post_prime_sync("superseded_by_schedule")
+        requested = int(round(speed))
+        initial_manual: float | None = None
+        pump_was_on = False
+        defer_manual_sync = False
         async with self._control_lock:
-            await self._async_set_pool_filtration_preset_locked(speed)
-            await self._async_set_pump_power_locked(True)
+            pool_mode = _find_pool_mode(self.reported)
+            if pool_mode is not None:
+                pump_was_on = _coerce_bool(pool_mode[1].get("st")) is True
+            controller = _find_filter_controller(self.reported)
+            if controller is not None:
+                initial_manual = _coerce_number(controller[1].get("manSpd"))
+
+            await self._async_set_pool_filtration_preset_locked(requested)
+            if pump_was_on:
+                ecm0 = _mapping(self.reported.get("ecm0"))
+                requested_speed = _coerce_number(ecm0.get("reqSpd"))
+                commanded_speed = _coerce_number(ecm0.get("cmdSpd"))
+                defer_manual_sync = (
+                    requested_speed is not None
+                    and commanded_speed is not None
+                    and round(requested_speed) == requested
+                    and round(commanded_speed) != requested
+                )
+                if not defer_manual_sync:
+                    await self._async_set_pump_speed_locked(requested)
+
+            else:
+                # The tested TCX does not retain manSpd while stopped. Start
+                # with a separate, clean pool.st command and let the preset own
+                # priming.
+                await self._async_set_pump_power_locked(True)
+
+        if not pump_was_on or defer_manual_sync:
+            self._schedule_post_prime_sync(requested, initial_manual)
 
     async def async_set_pool_filtration_preset(self, speed: float) -> None:
         """Set only the Pool Filtration entry in the complete ECM preset list."""
+        await self._async_cancel_post_prime_sync("pool_preset_changed")
         async with self._control_lock:
             await self._async_set_pool_filtration_preset_locked(speed)
 
@@ -1237,6 +1441,8 @@ class TCXClient:
                 and (actual := _coerce_number(confirmed.get("speed"))) is not None
                 and round(actual) == requested
             ),
+            confirmation_timeout=POOL_FILTRATION_CONFIRM_TIMEOUT,
+            refresh_on_timeout=True,
         )
 
     async def async_set_pool_light(self, enabled: bool) -> None:
@@ -1261,42 +1467,45 @@ class TCXClient:
 
     async def async_set_pump_speed(self, speed: float) -> None:
         """Set the filtration controller's manual speed and await confirmation."""
+        await self._async_cancel_post_prime_sync("manual_speed_commanded")
         async with self._control_lock:
-            controller = _find_filter_controller(self.reported)
-            if controller is None:
-                raise TCXControlUnsupported(
-                    "This TCX controller has no confirmed F_CTRL/FILT controller"
-                )
-            controller_key, controller_state = controller
-            ecm0 = _mapping(self.reported.get("ecm0"))
-            minimum = _coerce_number(ecm0.get("minSpd"))
-            if minimum is None:
-                minimum = _coerce_number(controller_state.get("minSpd"))
-            maximum = _coerce_number(ecm0.get("maxSpd"))
-            if maximum is None:
-                maximum = _coerce_number(controller_state.get("maxSpd"))
-            if minimum is None or maximum is None:
-                raise TCXControlUnsupported(
-                    "The TCX controller did not report safe pump speed limits"
-                )
+            await self._async_set_pump_speed_locked(speed)
 
-            requested = int(round(speed))
-            if requested < minimum or requested > maximum:
-                raise TCXControlUnsupported(
-                    f"Pump speed must be between {minimum:.0f} and {maximum:.0f} RPM"
-                )
-            current = _coerce_number(controller_state.get("manSpd"))
-            if current is not None and round(current) == requested:
-                return
-            await self._async_send_control(
-                {controller_key: {"manSpd": requested}},
-                "pump speed",
-                lambda reported: (
-                    (confirmed := _find_filter_controller(reported)) is not None
-                    and (actual := _coerce_number(confirmed[1].get("manSpd"))) is not None
-                    and round(actual) == requested
-                ),
+    async def _async_set_pump_speed_locked(self, speed: float) -> None:
+        """Set manual speed while the caller holds the serialized control lock."""
+        controller = _find_filter_controller(self.reported)
+        if controller is None:
+            raise TCXControlUnsupported(
+                "This TCX controller has no confirmed F_CTRL/FILT controller"
             )
+        controller_key, controller_state = controller
+        ecm0 = _mapping(self.reported.get("ecm0"))
+        minimum = _coerce_number(ecm0.get("minSpd"))
+        if minimum is None:
+            minimum = _coerce_number(controller_state.get("minSpd"))
+        maximum = _coerce_number(ecm0.get("maxSpd"))
+        if maximum is None:
+            maximum = _coerce_number(controller_state.get("maxSpd"))
+        if minimum is None or maximum is None:
+            raise TCXControlUnsupported("The TCX controller did not report safe pump speed limits")
+
+        requested = int(round(speed))
+        if requested < minimum or requested > maximum:
+            raise TCXControlUnsupported(
+                f"Pump speed must be between {minimum:.0f} and {maximum:.0f} RPM"
+            )
+        current = _coerce_number(controller_state.get("manSpd"))
+        if current is not None and round(current) == requested:
+            return
+        await self._async_send_control(
+            {controller_key: {"manSpd": requested}},
+            "pump speed",
+            lambda reported: (
+                (confirmed := _find_filter_controller(reported)) is not None
+                and (actual := _coerce_number(confirmed[1].get("manSpd"))) is not None
+                and round(actual) == requested
+            ),
+        )
 
     def _record_ws_structure(self, data: dict[str, Any]) -> None:
         structure = _ws_structure(data)

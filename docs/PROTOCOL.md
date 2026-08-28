@@ -198,6 +198,33 @@ The live test confirmed that TCX then transitions from its 2500 RPM priming
 command directly to the new Pool Filtration preset without a startup
 `filt0.manSpd` write.
 
+A later scheduled start exposed an important confirmation-timing edge case.
+The `ecm0.spdList` desired write reached the controller, but its reported-state
+confirmation arrived after the original 15-second control timeout. The start
+transaction therefore stopped before sending `pool.st = 1`; the automation's
+bounded retry ran 2 minutes 45 seconds later, saw that the preset had finally
+been reported, skipped a duplicate preset write, and sent only the normal
+power command. The pump then primed and settled at the correct RPM.
+
+Beginning with v0.2.4, Pool Filtration preset writes use a dedicated 45-second
+confirmation window. If the WebSocket confirmation is still late, TCX Direct
+performs one fresh REST-shadow read and accepts the command when `BD1_F`
+matches there. The actual cold-start frame remains exactly:
+
+```json
+{"pool": {"st": 1}}
+```
+
+The tested controller does not reliably retain a stopped-pump `filt0.manSpd`
+write through priming, so v0.2.4 never sends that command while stopped. Once
+`ecm0.reqSpd` and `ecm0.cmdSpd` both report the scheduled Pool Filtration RPM,
+the integration aligns `filt0.manSpd` once. The alignment is cancelled rather
+than overriding Waterfall, an off command, an intervening manual command, or a
+new scheduled target. When the pump is already running outside priming, the
+same action writes and confirms both the persistent Pool Filtration preset and
+`manSpd` immediately. A refresh received while `reqSpd` already matches the
+target but `cmdSpd` still reports priming is deferred until both values match.
+
 ### Waterfall feature relay: `fcr0`
 
 The tested controller reports its waterfall as a feature relay with the

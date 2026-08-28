@@ -2,6 +2,20 @@
 
 All notable changes to Jandy TCX Direct are documented here.
 
+## [0.2.4] - 2026-08-28
+
+### Fixed
+- Give Pool Filtration preset writes a dedicated 45-second confirmation window and verify the fresh REST shadow once before treating a late WebSocket confirmation as a failure.
+- Keep cold-start power commands strictly limited to `pool.st = 1`; a stopped pump never receives a `manSpd` write before TCX priming.
+- Align `manSpd` once after TCX leaves priming and reports both requested and commanded speed at the scheduled Pool Filtration RPM.
+
+### Changed
+- Make the existing `Start pump at speed` action synchronize both the persistent Pool Filtration preset and `manSpd` immediately when the pump is already running outside priming, allowing schedule changes and explicit refreshes to keep both targets consistent without disrupting a priming transition.
+- Cancel deferred post-prime alignment when the pump is stopped, Waterfall is commanded, the preset is changed, another schedule supersedes it, or a manual-speed command intervenes.
+
+### Added
+- Report command confirmation latency, historical failure details, late-confirmation recovery, and post-prime synchronization state in diagnostics.
+
 ## [0.2.3] - 2026-08-27
 
 ### Added
