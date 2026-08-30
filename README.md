@@ -9,7 +9,7 @@ TCX Direct connects Home Assistant directly to the iAquaLink/Zodiac cloud. It do
 
 ## Current version
 
-**v0.2.9**
+**v0.2.10**
 
 The integration prioritizes reliable telemetry and conservative equipment control. Native control is enabled only for TCX equipment whose state and write behavior have been captured and validated; other equipment remains read-only.
 
@@ -36,6 +36,7 @@ The integration prioritizes reliable telemetry and conservative equipment contro
 - Cloud, WebSocket transport, and WebSocket stream health
 - Connection/reconnect diagnostics
 - Control status with the latest command outcome and failure details
+- Integration Version with a sortable numeric `version_code` attribute
 - Live-versus-cached data status and active source
 - Last successful update, WebSocket update, reported equipment state, and shadow update
 - Manual diagnostic reconnect button
@@ -60,6 +61,8 @@ Pump RPM reports the active motor `cmdSpd`, including priming and other controll
 Pump Requested RPM reports `ecm0.reqSpd` independently from the active command. Pump Operating Phase compares requested, commanded, and configured priming RPM and also considers the confirmed Waterfall relay, allowing priming and other speed transitions to be shown without changing the writable speed control.
 
 Controller Mode is deliberately read-only and maps the observed values `1 = Auto`, `2 = Quick Clean`, `3 = Service`, `4 = Time Out`, and `5 = Transitioning`. Any other numeric value is retained as `Unknown (code N)`. Writable equipment entities become unavailable outside Auto, and a direct action or service call is rejected before transmission when any known or unknown non-Auto code is active. TCX Direct never forces the controller out of a local maintenance mode. Freeze Protection Setpoint exposes the reported `freezeSP` value without inferring an unconfirmed unit.
+
+Integration Version is an enabled diagnostic sensor that displays the installed semantic release, such as `0.2.10`, and remains available when TCX cloud data is unavailable. Its numeric `version_code` attribute uses `major × 1,000,000 + minor × 1,000 + patch`, so v0.2.9 is `2009` and v0.2.10 is `2010` without treating a semantic version as a decimal number.
 
 The `tcx_direct.start_pump_at_speed` action targets the Pump Power switch and accepts an `rpm` value. It synchronizes the persistent Pool Filtration preset with a dedicated 45-second confirmation window and one fresh-shadow verification if the live confirmation is late. A stopped pump then receives only the normal `pool.st = 1` power command; no speed is combined with the start frame. TCX owns priming, after which TCX Direct aligns `manSpd` to the scheduled RPM as soon as the running motor leaves its distinct priming speed. This also corrects an older manual speed that TCX may restore at the end of priming. Waterfall, a stopped pump, an explicit TCX Direct manual-speed command, or a conflicting live `state.desired` manual-speed command from another client cancels that deferred alignment. The live command must target the dynamically discovered filtration-controller key; unrelated desired-state traffic and reported-only drift do not cancel it. For an already-running pump outside the priming transition, the action synchronizes both the Pool Filtration preset and manual speed immediately; a refresh during priming remains deferred until priming ends. The action never changes Spa Filtration or Waterfall presets.
 
@@ -118,7 +121,7 @@ This repository includes `hacs.json` and can be added as a custom **Integration*
 
 Home Assistant's **Download diagnostics** output is deliberately detailed because the TCX protocol is still being mapped. Sensitive values such as credentials, tokens, controller identifiers, coordinates, MAC addresses, and session identifiers are redacted.
 
-Diagnostics include WebSocket message counts, recent payload structures, recent distinct controller-mode transitions, reconnect-reason counts, Authorization/bootstrap activity, shadow polling, authentication refreshes, and the sanitized merged state used by Home Assistant. Post-prime synchronization includes a bounded, de-duplicated transition trail with its generation, target, dynamically discovered filter key, relevant motor speeds and states, priming phase, live desired override, and decision.
+Diagnostics include the installed semantic version and numeric version code, WebSocket message counts, recent payload structures, recent distinct controller-mode transitions, reconnect-reason counts, Authorization/bootstrap activity, shadow polling, authentication refreshes, and the sanitized merged state used by Home Assistant. Post-prime synchronization includes a bounded, de-duplicated transition trail with its generation, target, dynamically discovered filter key, relevant motor speeds and states, priming phase, live desired override, and decision.
 
 Recurring identical desired-state echoes are deduplicated so unusual protocol events remain visible. Hardware and network identifiers—including Zigbee identifiers—are redacted before diagnostics are exported.
 

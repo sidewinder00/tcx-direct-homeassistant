@@ -2,6 +2,13 @@
 
 All notable changes to Jandy TCX Direct are documented here.
 
+## [0.2.10] - 2026-08-30
+
+### Added
+- Add an enabled Integration Version diagnostic sensor that displays the installed semantic version and remains available independently of TCX cloud state.
+- Add a sortable numeric `version_code` state attribute and include both semantic and numeric versions in downloaded diagnostics. The encoding reserves three decimal digits each for minor and patch components, so v0.2.9 is `2009` and v0.2.10 is `2010`.
+- Add regression coverage for version encoding, invalid or ambiguous versions, the stable entity identifier, diagnostics exposure, and release metadata.
+
 ## [0.2.9] - 2026-08-30
 
 ### Fixed

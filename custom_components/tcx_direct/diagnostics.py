@@ -13,6 +13,8 @@ from .const import (
     POST_PRIME_SYNC_TIMEOUT,
     PUMP_POWER_CONFIRM_TIMEOUT,
     PUMP_ZERO_GRACE_SECONDS,
+    VERSION,
+    VERSION_CODE,
 )
 from .redaction import sanitize_diagnostics
 
@@ -48,6 +50,10 @@ async def async_get_config_entry_diagnostics(
     coordinator = runtime.coordinator
 
     diagnostics = {
+        "integration": {
+            "version": VERSION,
+            "version_code": VERSION_CODE,
+        },
         "config": dict(entry.data),
         "options": dict(entry.options),
         "connection": {

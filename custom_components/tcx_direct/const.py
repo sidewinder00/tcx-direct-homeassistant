@@ -2,7 +2,24 @@ from __future__ import annotations
 
 DOMAIN = "tcx_direct"
 NAME = "Jandy TCX Direct"
-VERSION = "0.2.9"
+
+
+def encode_version_code(version: str) -> int:
+    """Encode a three-part release version as a sortable integer."""
+    parts = version.split(".")
+    if len(parts) != 3:
+        raise ValueError("Version must contain exactly three numeric components")
+    try:
+        major, minor, patch = (int(part) for part in parts)
+    except ValueError as err:
+        raise ValueError("Version components must be integers") from err
+    if major < 0 or not 0 <= minor < 1000 or not 0 <= patch < 1000:
+        raise ValueError("Version components must be non-negative and fit the encoding")
+    return major * 1_000_000 + minor * 1_000 + patch
+
+
+VERSION = "0.2.10"
+VERSION_CODE = encode_version_code(VERSION)
 
 ATTR_RPM = "rpm"
 SERVICE_START_PUMP_AT_SPEED = "start_pump_at_speed"

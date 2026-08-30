@@ -14,6 +14,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import TCXConfigEntry
+from .const import VERSION, VERSION_CODE
 from .entity import TCXEntity
 
 
@@ -220,13 +221,25 @@ SENSORS = (
     ),
 )
 
+VERSION_SENSOR_DESCRIPTION = SensorEntityDescription(
+    key="integration_version",
+    name="Integration Version",
+    icon="mdi:tag-outline",
+    entity_category=EntityCategory.DIAGNOSTIC,
+)
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: TCXConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    async_add_entities(TCXSensor(entry, description) for description in SENSORS)
+    async_add_entities(
+        [
+            *(TCXSensor(entry, description) for description in SENSORS),
+            TCXIntegrationVersionSensor(entry),
+        ]
+    )
 
 
 class TCXSensor(TCXEntity, SensorEntity):
@@ -250,3 +263,23 @@ class TCXSensor(TCXEntity, SensorEntity):
             if data.get(key) is not None
         }
         return attributes or None
+
+
+class TCXIntegrationVersionSensor(TCXEntity, SensorEntity):
+    """Expose the installed TCX Direct release independently of cloud state."""
+
+    entity_description = VERSION_SENSOR_DESCRIPTION
+    _attr_native_value = VERSION
+
+    def __init__(self, entry: TCXConfigEntry) -> None:
+        super().__init__(entry)
+        self._attr_unique_id = f"{entry.data['device_id']}_integration_version"
+
+    @property
+    def available(self) -> bool:
+        """Keep static release metadata available during TCX cloud outages."""
+        return True
+
+    @property
+    def extra_state_attributes(self) -> dict[str, int]:
+        return {"version_code": VERSION_CODE}
