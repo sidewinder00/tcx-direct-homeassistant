@@ -255,14 +255,26 @@ matches there. The actual cold-start frame remains exactly:
 ```
 
 The tested controller does not reliably retain a stopped-pump `filt0.manSpd`
-write through priming, so v0.2.4 never sends that command while stopped. Once
-`ecm0.reqSpd` and `ecm0.cmdSpd` both report the scheduled Pool Filtration RPM,
-the integration aligns `filt0.manSpd` once. The alignment is cancelled rather
-than overriding Waterfall, an off command, an intervening manual command, or a
-new scheduled target. When the pump is already running outside priming, the
-same action writes and confirms both the persistent Pool Filtration preset and
-`manSpd` immediately. A refresh received while `reqSpd` already matches the
-target but `cmdSpd` still reports priming is deferred until both values match.
+write through priming, so v0.2.4 never sends that command while stopped. The
+initial implementation waited for both `ecm0.reqSpd` and `ecm0.cmdSpd` to equal
+the scheduled RPM before aligning `filt0.manSpd`.
+
+A later 2600 RPM scheduled start showed TCX restoring a previously used 2575
+RPM manual value as priming ended, even though the persistent `BD1_F` preset
+already contained 2600. The old synchronization treated that restoration as
+an intervening manual change and stopped, leaving the pump at 2575. Beginning
+with v0.2.8, synchronization waits while `cmdSpd` equals the distinct `prmSpd`
+and differs from `reqSpd`. Once the running motor leaves that priming state, it
+writes and confirms the scheduled `filt0.manSpd`, correcting any stale value
+restored by TCX. If `prmSpd` is unavailable, the conservative fallback still
+requires both requested and commanded speeds to reach the target.
+
+The pending alignment is cancelled rather than overriding Waterfall, an off
+command, an explicit TCX Direct manual-speed command, a direct preset change,
+or a newer scheduled target. When the pump is already running outside priming,
+the same action writes and confirms both the persistent Pool Filtration preset
+and `manSpd` immediately. A schedule refresh received during priming remains
+deferred until the motor leaves the distinct priming speed.
 
 ### Controller operating mode: `systemMode`
 

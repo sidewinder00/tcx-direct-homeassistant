@@ -256,13 +256,7 @@ def _pump_operating_phase(
         return "Off"
     if waterfall_state is True:
         return "Waterfall"
-    if (
-        commanded_rpm is not None
-        and requested_rpm is not None
-        and priming_rpm is not None
-        and round(commanded_rpm) == round(priming_rpm)
-        and round(commanded_rpm) != round(requested_rpm)
-    ):
+    if _pump_is_priming(requested_rpm, commanded_rpm, priming_rpm):
         return "Priming"
     if (
         commanded_rpm is not None
@@ -271,6 +265,42 @@ def _pump_operating_phase(
     ):
         return "Transitioning"
     return "Running"
+
+
+def _pump_is_priming(
+    requested_rpm: float | None,
+    commanded_rpm: float | None,
+    priming_rpm: float | None,
+) -> bool:
+    """Return whether the motor is actively running its distinct priming speed."""
+    return (
+        commanded_rpm is not None
+        and requested_rpm is not None
+        and priming_rpm is not None
+        and round(commanded_rpm) == round(priming_rpm)
+        and round(commanded_rpm) != round(requested_rpm)
+    )
+
+
+def _post_prime_sync_ready(
+    target_rpm: int,
+    requested_rpm: float | None,
+    commanded_rpm: float | None,
+    priming_rpm: float | None,
+    priming_observed: bool,
+) -> bool:
+    """Return whether a running motor can accept its scheduled manual setpoint."""
+    if commanded_rpm is None or commanded_rpm <= 0:
+        return False
+    if _pump_is_priming(requested_rpm, commanded_rpm, priming_rpm):
+        return False
+    if (
+        requested_rpm is not None
+        and round(requested_rpm) == target_rpm
+        and round(commanded_rpm) == target_rpm
+    ):
+        return True
+    return priming_observed and priming_rpm is not None
 
 
 def _find_terminal(
@@ -1246,7 +1276,7 @@ class TCXClient:
         self.last_post_prime_sync_result = result
         self.last_post_prime_sync_error = None
 
-    def _schedule_post_prime_sync(self, requested: int, initial_manual: float | None) -> None:
+    def _schedule_post_prime_sync(self, requested: int) -> None:
         """Schedule one non-blocking manual-setpoint alignment after TCX priming."""
         self.post_prime_sync_scheduled_count += 1
         self.post_prime_sync_target = requested
@@ -1255,7 +1285,7 @@ class TCXClient:
         self.last_post_prime_sync_result = None
         self.last_post_prime_sync_error = None
         task = asyncio.create_task(
-            self._async_post_prime_sync(requested, initial_manual),
+            self._async_post_prime_sync(requested),
             name=f"tcx_direct_post_prime_{requested}",
         )
         self._post_prime_sync_task = task
@@ -1276,13 +1306,10 @@ class TCXClient:
         self.last_post_prime_sync_result = result
         self.last_post_prime_sync_error = error
 
-    async def _async_post_prime_sync(
-        self,
-        requested: int,
-        initial_manual: float | None,
-    ) -> None:
+    async def _async_post_prime_sync(self, requested: int) -> None:
         """Align manSpd once TCX has left priming and reached Pool Filtration."""
         deadline = time.monotonic() + POST_PRIME_SYNC_TIMEOUT
+        priming_observed = False
         try:
             while time.monotonic() < deadline:
                 await asyncio.sleep(POST_PRIME_SYNC_INTERVAL)
@@ -1299,27 +1326,23 @@ class TCXClient:
                     self._finish_post_prime_sync("skipped", "waterfall_active")
                     return
 
-                controller = _find_filter_controller(self.reported)
-                if controller is None:
+                if _find_filter_controller(self.reported) is None:
                     continue
-                manual = _coerce_number(controller[1].get("manSpd"))
-                if (
-                    initial_manual is not None
-                    and manual is not None
-                    and round(manual) not in {round(initial_manual), requested}
-                ):
-                    self.post_prime_sync_skip_count += 1
-                    self._finish_post_prime_sync("skipped", "manual_speed_changed")
-                    return
 
                 ecm0 = _mapping(self.reported.get("ecm0"))
+                if _coerce_bool(ecm0.get("st")) is not True:
+                    continue
                 requested_speed = _coerce_number(ecm0.get("reqSpd"))
                 commanded_speed = _coerce_number(ecm0.get("cmdSpd"))
-                if (
-                    requested_speed is None
-                    or commanded_speed is None
-                    or round(requested_speed) != requested
-                    or round(commanded_speed) != requested
+                priming_speed = _coerce_number(ecm0.get("prmSpd"))
+                if _pump_is_priming(requested_speed, commanded_speed, priming_speed):
+                    priming_observed = True
+                if not _post_prime_sync_ready(
+                    requested,
+                    requested_speed,
+                    commanded_speed,
+                    priming_speed,
+                    priming_observed,
                 ):
                     continue
 
@@ -1327,12 +1350,21 @@ class TCXClient:
                     pool_mode = _find_pool_mode(self.reported)
                     waterfall = _find_waterfall_feature(self.reported)
                     ecm0 = _mapping(self.reported.get("ecm0"))
+                    requested_speed = _coerce_number(ecm0.get("reqSpd"))
+                    commanded_speed = _coerce_number(ecm0.get("cmdSpd"))
+                    priming_speed = _coerce_number(ecm0.get("prmSpd"))
                     if (
                         pool_mode is None
                         or _coerce_bool(pool_mode[1].get("st")) is not True
                         or (waterfall is not None and _coerce_bool(waterfall[1].get("st")) is True)
-                        or round(_coerce_number(ecm0.get("reqSpd")) or -1) != requested
-                        or round(_coerce_number(ecm0.get("cmdSpd")) or -1) != requested
+                        or _coerce_bool(ecm0.get("st")) is not True
+                        or not _post_prime_sync_ready(
+                            requested,
+                            requested_speed,
+                            commanded_speed,
+                            priming_speed,
+                            priming_observed,
+                        )
                     ):
                         continue
                     await self._async_set_pump_speed_locked(requested)
@@ -1422,16 +1454,12 @@ class TCXClient:
         """Apply a scheduled speed without combining RPM and power commands."""
         await self._async_cancel_post_prime_sync("superseded_by_schedule")
         requested = int(round(speed))
-        initial_manual: float | None = None
         pump_was_on = False
         defer_manual_sync = False
         async with self._control_lock:
             pool_mode = _find_pool_mode(self.reported)
             if pool_mode is not None:
                 pump_was_on = _coerce_bool(pool_mode[1].get("st")) is True
-            controller = _find_filter_controller(self.reported)
-            if controller is not None:
-                initial_manual = _coerce_number(controller[1].get("manSpd"))
 
             await self._async_set_pool_filtration_preset_locked(requested)
             if pump_was_on:
@@ -1454,7 +1482,7 @@ class TCXClient:
                 await self._async_set_pump_power_locked(True)
 
         if not pump_was_on or defer_manual_sync:
-            self._schedule_post_prime_sync(requested, initial_manual)
+            self._schedule_post_prime_sync(requested)
 
     async def async_set_pool_filtration_preset(self, speed: float) -> None:
         """Set only the Pool Filtration entry in the complete ECM preset list."""

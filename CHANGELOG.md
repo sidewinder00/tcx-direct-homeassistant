@@ -2,10 +2,20 @@
 
 All notable changes to Jandy TCX Direct are documented here.
 
+## [0.2.8] - 2026-08-30
+
+### Fixed
+- Correct a scheduled cold start when TCX restores an older `manSpd` after priming. The deferred synchronization now waits while the motor is at its distinct priming speed, then applies the scheduled RPM instead of misclassifying the restored value as a new manual override.
+- Preserve cancellation by an explicit TCX Direct manual-speed command, pump-off command, Waterfall command, preset change, or newer scheduled target while the deferred synchronization is pending.
+- Target Python 3.13 in Ruff and CI so formatting retains portable parenthesized multi-exception clauses and cannot reintroduce the v0.2.7 startup failure.
+
+### Added
+- Add regression coverage for the observed 2575-to-2600 scheduled-start failure and for explicit manual-speed cancellation during priming.
+
 ## [0.2.7] - 2026-08-30
 
 ### Fixed
-- Fix four Python 2-style `except A, B:` clauses in `api.py`. On Python 3.13 and earlier this is a `SyntaxError`, so `api.py` failed to import and the entire integration failed to load at Home Assistant startup.
+- Fix four Python 3.14-only parenthesis-free multi-exception clauses in `api.py`. On Python 3.13 and earlier this is a `SyntaxError`, so `api.py` failed to import and the entire integration failed to load at Home Assistant startup.
 
 ## [0.2.6] - 2026-08-29
 

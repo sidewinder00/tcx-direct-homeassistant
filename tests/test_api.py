@@ -176,6 +176,25 @@ def test_pump_operating_phase(reported: dict[str, object], expected: str) -> Non
     assert api.normalize_tcx_state(reported)["pump_operating_phase"] == expected
 
 
+@pytest.mark.parametrize(
+    ("requested", "commanded", "priming", "observed", "expected"),
+    [
+        (2600, 2500, 2500, False, False),
+        (2600, 2600, 2500, False, True),
+        (2575, 2575, 2500, False, False),
+        (2575, 2575, 2500, True, True),
+    ],
+)
+def test_post_prime_sync_readiness(
+    requested: float,
+    commanded: float,
+    priming: float,
+    observed: bool,
+    expected: bool,
+) -> None:
+    assert api._post_prime_sync_ready(2600, requested, commanded, priming, observed) is expected
+
+
 def test_pump_manual_speed_remains_separate_from_commanded_speed() -> None:
     normalized = api.normalize_tcx_state(
         {
@@ -856,6 +875,143 @@ def test_cold_start_aligns_manual_speed_only_after_priming(monkeypatch) -> None:
     assert desired_frames[-1] == {"filt0": {"manSpd": 2575}}
     assert client.post_prime_sync_success_count == 1
     assert client.last_post_prime_sync_result == "manual_speed_aligned"
+
+
+def test_cold_start_replaces_controller_restored_stale_manual_speed(monkeypatch) -> None:
+    client = make_client()
+    client.user_id = "12345"
+    client.websocket_connected = True
+    client.reported = {
+        "pool": {"fr": "Pool Filtration", "et": "V_POS", "app": "POOL_M", "st": 0},
+        "filt0": {
+            "fr": "Filtration",
+            "et": "F_CTRL",
+            "app": "FILT",
+            "manSpd": 1100,
+            "minSpd": 600,
+            "maxSpd": 3450,
+        },
+        "ecm0": {
+            "st": 0,
+            "prmSpd": 2500,
+            "minSpd": 600,
+            "maxSpd": 3450,
+            "spdList": [
+                {"name": "Pool Filtration", "speed": 2600, "app": "BD1_F", "ar": 1},
+                {"name": "Spa Filtration", "speed": 2525, "app": "BD2_F", "ar": 2},
+                {"name": "Waterfall", "speed": 2850, "app": "WF", "ar": 3},
+            ],
+        },
+        "fcr0": {"fr": "Waterfall", "et": "FRLY", "app": "WF", "st": 0},
+    }
+
+    class FakeWebSocket:
+        closed = False
+
+        def __init__(self) -> None:
+            self.messages: list[dict[str, object]] = []
+
+        async def send_json(self, message: dict[str, object]) -> None:
+            self.messages.append(message)
+            desired = message["payload"]["state"]["desired"]
+            if "pool" in desired:
+                client.reported["pool"]["st"] = 1
+                client.reported["ecm0"].update({"st": 1, "reqSpd": 2600, "cmdSpd": 2500})
+            if "filt0" in desired:
+                client.reported["filt0"]["manSpd"] = desired["filt0"]["manSpd"]
+            client._resolve_pending_control()
+
+    websocket = FakeWebSocket()
+    client._ws = websocket  # type: ignore[assignment]
+    monkeypatch.setattr(api, "POST_PRIME_SYNC_INTERVAL", 0)
+
+    async def run_scenario() -> None:
+        await client.async_start_pump_at_speed(2600)
+        assert [message["payload"]["state"]["desired"] for message in websocket.messages] == [
+            {"pool": {"st": 1}}
+        ]
+
+        # Let the deferred task observe the distinct 2500 RPM priming state.
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+
+        # TCX can restore an older manual value as priming ends even though
+        # the persistent Pool Filtration preset already contains the target.
+        client.reported["filt0"]["manSpd"] = 2575
+        client.reported["ecm0"].update({"reqSpd": 2575, "cmdSpd": 2575})
+        task = client._post_prime_sync_task
+        assert task is not None
+        await task
+
+    asyncio.run(run_scenario())
+
+    desired_frames = [message["payload"]["state"]["desired"] for message in websocket.messages]
+    assert desired_frames == [
+        {"pool": {"st": 1}},
+        {"filt0": {"manSpd": 2600}},
+    ]
+    assert client.post_prime_sync_success_count == 1
+    assert client.post_prime_sync_skip_count == 0
+    assert client.last_post_prime_sync_result == "manual_speed_aligned"
+
+
+def test_manual_speed_command_cancels_pending_post_prime_sync(monkeypatch) -> None:
+    client = make_client()
+    client.user_id = "12345"
+    client.websocket_connected = True
+    client.reported = {
+        "pool": {"fr": "Pool Filtration", "et": "V_POS", "app": "POOL_M", "st": 0},
+        "filt0": {
+            "fr": "Filtration",
+            "et": "F_CTRL",
+            "app": "FILT",
+            "manSpd": 1100,
+            "minSpd": 600,
+            "maxSpd": 3450,
+        },
+        "ecm0": {
+            "st": 0,
+            "prmSpd": 2500,
+            "minSpd": 600,
+            "maxSpd": 3450,
+            "spdList": [{"name": "Pool Filtration", "speed": 2600, "app": "BD1_F", "ar": 1}],
+        },
+    }
+
+    class FakeWebSocket:
+        closed = False
+
+        def __init__(self) -> None:
+            self.messages: list[dict[str, object]] = []
+
+        async def send_json(self, message: dict[str, object]) -> None:
+            self.messages.append(message)
+            desired = message["payload"]["state"]["desired"]
+            if "pool" in desired:
+                client.reported["pool"]["st"] = 1
+                client.reported["ecm0"].update({"st": 1, "reqSpd": 2600, "cmdSpd": 2500})
+            if "filt0" in desired:
+                client.reported["filt0"]["manSpd"] = desired["filt0"]["manSpd"]
+            client._resolve_pending_control()
+
+    websocket = FakeWebSocket()
+    client._ws = websocket  # type: ignore[assignment]
+    monkeypatch.setattr(api, "POST_PRIME_SYNC_INTERVAL", 0)
+
+    async def run_scenario() -> None:
+        await client.async_start_pump_at_speed(2600)
+        await client.async_set_pump_speed(1800)
+
+    asyncio.run(run_scenario())
+
+    desired_frames = [message["payload"]["state"]["desired"] for message in websocket.messages]
+    assert desired_frames == [
+        {"pool": {"st": 1}},
+        {"filt0": {"manSpd": 1800}},
+    ]
+    assert client.post_prime_sync_cancel_count == 1
+    assert client.post_prime_sync_success_count == 0
+    assert client.last_post_prime_sync_result == "manual_speed_commanded"
 
 
 def test_schedule_refresh_during_priming_defers_manual_speed(monkeypatch) -> None:

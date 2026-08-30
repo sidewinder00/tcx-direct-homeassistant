@@ -3,7 +3,7 @@
   "services": {
     "start_pump_at_speed": {
       "name": "Start pump at speed",
-      "description": "Synchronize the scheduled Pool Filtration RPM. A stopped or priming pump aligns its manual setpoint after priming; a running pump updates both targets immediately.",
+      "description": "Synchronize the scheduled Pool Filtration RPM. A stopped or priming pump aligns its manual setpoint after priming, correcting an older speed restored by TCX; a running pump updates both targets immediately.",
       "fields": {
         "rpm": {
           "name": "Filtration preset",
