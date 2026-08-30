@@ -906,7 +906,7 @@ class TCXClient:
             self.refresh_token = None
         try:
             expires = max(600, int(expires_in))
-        except TypeError, ValueError:
+        except (TypeError, ValueError):
             expires = 3600
         self._token_expires_at = time.monotonic() + expires
 
@@ -926,7 +926,7 @@ class TCXClient:
                     await self._async_full_login()
                     return
                 data = await response.json(content_type=None)
-        except aiohttp.ClientError, asyncio.TimeoutError, ValueError:
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
             await self._async_full_login()
             return
         self._apply_auth(data, keep_refresh=True)
@@ -1830,7 +1830,7 @@ class TCXClient:
                 _LOGGER.debug(
                     "TCX startup snapshot not received yet; re-sent Authorization subscription"
                 )
-            except aiohttp.ClientError, ConnectionError, RuntimeError:
+            except (aiohttp.ClientError, ConnectionError, RuntimeError):
                 return
 
     async def _socket_supervisor(self) -> None:
@@ -2060,7 +2060,7 @@ class TCXClient:
             )
         except asyncio.CancelledError:
             raise
-        except asyncio.TimeoutError, aiohttp.ClientError, ConnectionError, RuntimeError:
+        except (asyncio.TimeoutError, aiohttp.ClientError, ConnectionError, RuntimeError):
             self.watchdog_resubscribe_failure_count += 1
             return False
         self.watchdog_resubscribe_success_count += 1
