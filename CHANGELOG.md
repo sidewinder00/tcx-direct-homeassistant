@@ -5,7 +5,7 @@ All notable changes to Jandy TCX Direct are documented here.
 ## [0.2.7] - 2026-08-30
 
 ### Fixed
-- Fix four Python 2-style `except A, B:` clauses in `api.py` that silently bound the exception to a name instead of catching all listed exception types.
+- Fix four Python 2-style `except A, B:` clauses in `api.py`. On Python 3.13 and earlier this is a `SyntaxError`, so `api.py` failed to import and the entire integration failed to load at Home Assistant startup.
 
 ## [0.2.6] - 2026-08-29
 
