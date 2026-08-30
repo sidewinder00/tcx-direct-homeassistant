@@ -16,6 +16,32 @@ def make_client() -> api.TCXClient:
     return api.TCXClient(object(), "user@example.com", "password", "device")
 
 
+def post_prime_client(filter_key: str = "filt0") -> api.TCXClient:
+    """Return a client waiting in a confirmed TCX priming state."""
+    client = make_client()
+    client.reported = {
+        "pool": {"et": "V_POS", "app": "POOL_M", "st": 1},
+        filter_key: {
+            "et": "F_CTRL",
+            "app": "FILT",
+            "manSpd": 2575,
+            "minSpd": 600,
+            "maxSpd": 3450,
+        },
+        "ecm0": {
+            "st": 1,
+            "manSpd": 2575,
+            "reqSpd": 2600,
+            "cmdSpd": 2500,
+            "prmSpd": 2500,
+            "minSpd": 600,
+            "maxSpd": 3450,
+        },
+        "fcr0": {"et": "FRLY", "app": "WF", "st": 0},
+    }
+    return client
+
+
 def test_collect_reported_merges_all_namespaces() -> None:
     payload = {
         "main": {"state": {"reported": {"water": {"value": 317}}}},
@@ -932,8 +958,13 @@ def test_cold_start_replaces_controller_restored_stale_manual_speed(monkeypatch)
         ]
 
         # Let the deferred task observe the distinct 2500 RPM priming state.
-        await asyncio.sleep(0)
-        await asyncio.sleep(0)
+        for _ in range(10):
+            context = client._post_prime_sync_context
+            if context is not None and context.priming_observed:
+                break
+            await asyncio.sleep(0)
+        assert context is not None
+        assert context.priming_observed is True
 
         # TCX can restore an older manual value as priming ends even though
         # the persistent Pool Filtration preset already contains the target.
@@ -953,6 +984,135 @@ def test_cold_start_replaces_controller_restored_stale_manual_speed(monkeypatch)
     assert client.post_prime_sync_success_count == 1
     assert client.post_prime_sync_skip_count == 0
     assert client.last_post_prime_sync_result == "manual_speed_aligned"
+
+
+def test_live_external_manual_speed_desired_cancels_matching_generation() -> None:
+    client = post_prime_client("filt3")
+
+    async def run_scenario() -> None:
+        client._schedule_post_prime_sync(2600)
+        task = client._post_prime_sync_task
+        context = client._post_prime_sync_context
+        assert task is not None
+        assert context is not None
+        assert context.filter_key == "filt3"
+
+        client._handle_post_prime_desired(
+            {"filt3": {"manSpd": 1800}},
+            observed_at="external-command",
+            device_timestamp=123,
+        )
+        await task
+
+    asyncio.run(run_scenario())
+
+    assert client.post_prime_sync_cancel_count == 1
+    assert client.post_prime_sync_success_count == 0
+    assert client.post_prime_sync_state == "cancelled"
+    assert client.last_post_prime_sync_result == "external_manual_speed_commanded"
+    assert client.last_post_prime_sync_external_override_rpm == 1800
+    assert client.last_post_prime_sync_external_override_at == "external-command"
+    assert client.recent_post_prime_transitions[-2]["decision"] == ("external_manual_speed_desired")
+    assert client.recent_post_prime_transitions[-2]["device_timestamp"] == 123
+    assert client.recent_post_prime_transitions[-1]["decision"] == (
+        "cancelled:external_manual_speed_commanded"
+    )
+
+
+def test_post_prime_desired_requires_exact_dynamic_key_and_conflicting_speed() -> None:
+    client = post_prime_client("filt3")
+
+    async def run_scenario() -> None:
+        client._schedule_post_prime_sync(2600)
+        context = client._post_prime_sync_context
+        assert context is not None
+
+        client._handle_post_prime_desired({"pool": {"st": 1}})
+        client._handle_post_prime_desired({"filt0": {"manSpd": 1800}})
+        client._handle_post_prime_desired({"other": {"manSpd": 1800}})
+        client._handle_post_prime_desired({"filt3": {"manSpd": 2600}})
+
+        assert context.override_event.is_set() is False
+        assert client.post_prime_sync_state == "waiting"
+        await client._async_cancel_post_prime_sync("test_complete")
+
+    asyncio.run(run_scenario())
+
+    decisions = [item["decision"] for item in client.recent_post_prime_transitions]
+    assert "matching_manual_speed_desired" in decisions
+    assert "external_manual_speed_desired" not in decisions
+
+
+def test_retained_desired_history_is_not_used_to_cancel_post_prime_sync() -> None:
+    client = post_prime_client()
+    data = {"service": "StateStreamer", "event": "StateReported"}
+    client._record_desired_payload(data, {"timestamp": 1}, {"filt0": {"manSpd": 1800}})
+
+    async def run_scenario() -> None:
+        client._schedule_post_prime_sync(2600)
+        context = client._post_prime_sync_context
+        assert context is not None
+        await asyncio.sleep(0)
+        assert context.override_event.is_set() is False
+        assert client.post_prime_sync_state == "waiting"
+        await client._async_cancel_post_prime_sync("test_complete")
+
+    asyncio.run(run_scenario())
+
+
+def test_superseded_post_prime_generation_cannot_cancel_replacement() -> None:
+    client = post_prime_client()
+
+    async def run_scenario() -> None:
+        client._schedule_post_prime_sync(2600)
+        old_context = client._post_prime_sync_context
+        assert old_context is not None
+        await client._async_cancel_post_prime_sync("superseded_by_schedule")
+
+        client._schedule_post_prime_sync(2700)
+        new_context = client._post_prime_sync_context
+        new_task = client._post_prime_sync_task
+        assert new_context is not None
+        assert new_task is not None
+        assert new_context.generation == old_context.generation + 1
+
+        old_context.override_event.set()
+        await asyncio.sleep(0)
+        assert client._post_prime_sync_context is new_context
+        assert new_context.override_event.is_set() is False
+        assert new_task.done() is False
+        await client._async_cancel_post_prime_sync("test_complete")
+
+    asyncio.run(run_scenario())
+
+
+def test_post_prime_transition_history_is_bounded_and_deduplicated() -> None:
+    client = post_prime_client()
+
+    async def run_scenario() -> None:
+        client._schedule_post_prime_sync(2600)
+        context = client._post_prime_sync_context
+        assert context is not None
+        client._recent_post_prime_transitions.clear()
+
+        client._record_post_prime_transition(context, "unchanged", observed_at="first")
+        client._record_post_prime_transition(context, "unchanged", observed_at="second")
+        records = client.recent_post_prime_transitions
+        assert len(records) == 1
+        assert records[0]["count"] == 2
+        assert records[0]["first_seen"] == "first"
+        assert records[0]["last_seen"] == "second"
+        assert records[0]["filter_manual_rpm"] == 2575
+        assert records[0]["commanded_rpm"] == 2500
+        assert records[0]["phase"] == "Priming"
+
+        for index in range(25):
+            client._record_post_prime_transition(context, f"decision-{index}")
+        assert len(client.recent_post_prime_transitions) == 20
+        assert client.recent_post_prime_transitions[0]["decision"] == "decision-5"
+        await client._async_cancel_post_prime_sync("test_complete")
+
+    asyncio.run(run_scenario())
 
 
 def test_manual_speed_command_cancels_pending_post_prime_sync(monkeypatch) -> None:

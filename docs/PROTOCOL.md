@@ -276,6 +276,23 @@ the same action writes and confirms both the persistent Pool Filtration preset
 and `manSpd` immediately. A schedule refresh received during priming remains
 deferred until the motor leaves the distinct priming speed.
 
+Beginning with v0.2.9, another cloud client can also cancel the pending
+alignment by sending a live `state.desired` delta whose dynamically discovered
+filtration-controller key contains a conflicting `manSpd`. The integration
+reacts on the arriving WebSocket event; it does not scan the retained desired
+payload history. A matching scheduled value, an unrelated object such as
+`pool`, or a `manSpd` under a different key is ignored. Each synchronization is
+tagged with a generation so an event associated with a superseded startup
+cannot affect the replacement task. Reported-only drift after priming is not
+treated as user intent and is corrected to the scheduled target.
+
+Whether a speed change made at the physical TCX panel produces the same
+desired-state event or only a reported-state change has not yet been captured.
+TCX Direct therefore does not claim that physical-panel changes can always
+cancel the pending alignment. Diagnostics retain the last 20 distinct
+post-prime decisions, with repeated unchanged observations folded into a
+count, so a future capture can resolve that behavior without an unbounded log.
+
 ### Controller operating mode: `systemMode`
 
 The controller reports a top-level numeric `systemMode`. Direct physical-panel

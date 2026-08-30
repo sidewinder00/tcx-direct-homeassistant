@@ -2,6 +2,16 @@
 
 All notable changes to Jandy TCX Direct are documented here.
 
+## [0.2.9] - 2026-08-30
+
+### Fixed
+- Cancel a pending post-prime speed alignment only when a live `state.desired` event targets the dynamically discovered filtration controller with a conflicting `manSpd`. Matching targets, unrelated desired keys, retained diagnostic history, and reported-only controller drift do not cancel the scheduled target.
+- Scope live override handling to the active synchronization generation so an event associated with a superseded startup cannot cancel its replacement.
+
+### Added
+- Add a bounded, de-duplicated post-prime diagnostic trail containing the generation, scheduled target, discovered controller key, filtration and motor speed values, equipment states, derived phase, priming observation, desired override, decision, and device timestamp.
+- Add regressions for dynamic controller keys, matching and unrelated desired payloads, stale desired history, superseded generations, controller-restored reported drift, and transition-history bounds.
+
 ## [0.2.8] - 2026-08-30
 
 ### Fixed

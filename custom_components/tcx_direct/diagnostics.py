@@ -139,6 +139,8 @@ async def async_get_config_entry_diagnostics(
             "timeout_seconds": POST_PRIME_SYNC_TIMEOUT,
             "state": client.post_prime_sync_state,
             "target_rpm": client.post_prime_sync_target,
+            "generation": client.post_prime_sync_generation,
+            "filter_key": client.post_prime_sync_filter_key,
             "scheduled_count": client.post_prime_sync_scheduled_count,
             "success_count": client.post_prime_sync_success_count,
             "cancel_count": client.post_prime_sync_cancel_count,
@@ -147,6 +149,9 @@ async def async_get_config_entry_diagnostics(
             "last_update_at": client.last_post_prime_sync_at,
             "last_result": client.last_post_prime_sync_result,
             "last_error": client.last_post_prime_sync_error,
+            "last_external_override_rpm": (client.last_post_prime_sync_external_override_rpm),
+            "last_external_override_at": client.last_post_prime_sync_external_override_at,
+            "recent_transitions": sanitize_diagnostics(client.recent_post_prime_transitions),
         },
         "authentication": {
             "full_login_count": client.full_login_count,

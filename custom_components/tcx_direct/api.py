@@ -33,6 +33,7 @@ from .const import (
     POST_PRIME_SYNC_TIMEOUT,
     PUMP_POWER_CONFIRM_TIMEOUT,
     RECENT_CONTROLLER_MODE_TRANSITIONS,
+    RECENT_POST_PRIME_TRANSITIONS,
     RECENT_WS_STRUCTURES,
     RECONNECT_MAX,
     SHADOW_INTERVAL,
@@ -92,6 +93,18 @@ class _PendingControl:
     description: str
     predicate: Callable[[dict[str, Any]], bool]
     future: asyncio.Future[None]
+
+
+@dataclass(slots=True)
+class _PostPrimeSyncContext:
+    generation: int
+    target_rpm: int
+    filter_key: str
+    override_event: asyncio.Event
+    priming_observed: bool = False
+    external_override_rpm: int | float | None = None
+    external_override_at: str | None = None
+    external_override_device_timestamp: int | None = None
 
 
 StateCallback = Callable[[dict[str, Any], str], Awaitable[None]]
@@ -835,6 +848,9 @@ class TCXClient:
         self._recent_controller_mode_transitions: deque[dict[str, Any]] = deque(
             maxlen=RECENT_CONTROLLER_MODE_TRANSITIONS
         )
+        self._recent_post_prime_transitions: deque[dict[str, Any]] = deque(
+            maxlen=RECENT_POST_PRIME_TRANSITIONS
+        )
 
         self._state_callback: StateCallback | None = None
         self._status_callback: StatusCallback | None = None
@@ -847,6 +863,8 @@ class TCXClient:
         self._control_lock = asyncio.Lock()
         self._pending_control: _PendingControl | None = None
         self._post_prime_sync_task: asyncio.Task[None] | None = None
+        self._post_prime_sync_context: _PostPrimeSyncContext | None = None
+        self._post_prime_sync_generation = 0
 
         self.control_command_count = 0
         self.control_success_count = 0
@@ -872,10 +890,14 @@ class TCXClient:
         self.post_prime_sync_skip_count = 0
         self.post_prime_sync_timeout_count = 0
         self.post_prime_sync_target: int | None = None
+        self.post_prime_sync_generation = 0
+        self.post_prime_sync_filter_key: str | None = None
         self.post_prime_sync_state = "idle"
         self.last_post_prime_sync_at: str | None = None
         self.last_post_prime_sync_result: str | None = None
         self.last_post_prime_sync_error: str | None = None
+        self.last_post_prime_sync_external_override_rpm: int | float | None = None
+        self.last_post_prime_sync_external_override_at: str | None = None
 
     def set_callbacks(
         self,
@@ -1265,9 +1287,13 @@ class TCXClient:
     async def _async_cancel_post_prime_sync(self, result: str) -> None:
         """Cancel a pending startup synchronization without touching pump state."""
         task = self._post_prime_sync_task
+        context = self._post_prime_sync_context
         self._post_prime_sync_task = None
+        self._post_prime_sync_context = None
         if task is None or task.done():
             return
+        if context is not None:
+            self._record_post_prime_transition(context, f"cancelled:{result}")
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
         self.post_prime_sync_cancel_count += 1
@@ -1280,13 +1306,34 @@ class TCXClient:
         """Schedule one non-blocking manual-setpoint alignment after TCX priming."""
         self.post_prime_sync_scheduled_count += 1
         self.post_prime_sync_target = requested
+        self._post_prime_sync_generation += 1
+        self.post_prime_sync_generation = self._post_prime_sync_generation
         self.post_prime_sync_state = "waiting"
         self.last_post_prime_sync_at = _utc_now_iso()
         self.last_post_prime_sync_result = None
         self.last_post_prime_sync_error = None
+        self.last_post_prime_sync_external_override_rpm = None
+        self.last_post_prime_sync_external_override_at = None
+
+        controller = _find_filter_controller(self.reported)
+        if controller is None:
+            self.post_prime_sync_filter_key = None
+            self.post_prime_sync_skip_count += 1
+            self._finish_post_prime_sync("skipped", "filter_controller_missing")
+            return
+
+        context = _PostPrimeSyncContext(
+            generation=self._post_prime_sync_generation,
+            target_rpm=requested,
+            filter_key=controller[0],
+            override_event=asyncio.Event(),
+        )
+        self._post_prime_sync_context = context
+        self.post_prime_sync_filter_key = context.filter_key
+        self._record_post_prime_transition(context, "scheduled")
         task = asyncio.create_task(
-            self._async_post_prime_sync(requested),
-            name=f"tcx_direct_post_prime_{requested}",
+            self._async_post_prime_sync(context),
+            name=f"tcx_direct_post_prime_{context.generation}_{requested}",
         )
         self._post_prime_sync_task = task
         task.add_done_callback(self._post_prime_sync_done)
@@ -1294,6 +1341,7 @@ class TCXClient:
     def _post_prime_sync_done(self, task: asyncio.Task[None]) -> None:
         if self._post_prime_sync_task is task:
             self._post_prime_sync_task = None
+            self._post_prime_sync_context = None
 
     def _finish_post_prime_sync(
         self,
@@ -1306,47 +1354,101 @@ class TCXClient:
         self.last_post_prime_sync_result = result
         self.last_post_prime_sync_error = error
 
-    async def _async_post_prime_sync(self, requested: int) -> None:
+    def _post_prime_sync_is_current(self, context: _PostPrimeSyncContext) -> bool:
+        """Return whether context still owns the active post-prime task."""
+        return (
+            self._post_prime_sync_context is context
+            and self._post_prime_sync_task is asyncio.current_task()
+        )
+
+    def _finish_external_post_prime_override(self, context: _PostPrimeSyncContext) -> None:
+        """Finish the active generation after a conflicting live desired command."""
+        if not self._post_prime_sync_is_current(context):
+            return
+        self.post_prime_sync_cancel_count += 1
+        self._record_post_prime_transition(context, "cancelled:external_manual_speed_commanded")
+        self._finish_post_prime_sync("cancelled", "external_manual_speed_commanded")
+
+    async def _async_post_prime_sync(self, context: _PostPrimeSyncContext) -> None:
         """Align manSpd once TCX has left priming and reached Pool Filtration."""
+        requested = context.target_rpm
         deadline = time.monotonic() + POST_PRIME_SYNC_TIMEOUT
-        priming_observed = False
         try:
             while time.monotonic() < deadline:
-                await asyncio.sleep(POST_PRIME_SYNC_INTERVAL)
+                sleep_task = asyncio.create_task(asyncio.sleep(POST_PRIME_SYNC_INTERVAL))
+                override_task = asyncio.create_task(context.override_event.wait())
+                try:
+                    await asyncio.wait(
+                        {sleep_task, override_task},
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                finally:
+                    sleep_task.cancel()
+                    override_task.cancel()
+                    await asyncio.gather(
+                        sleep_task,
+                        override_task,
+                        return_exceptions=True,
+                    )
+
+                if not self._post_prime_sync_is_current(context):
+                    return
+                if context.override_event.is_set():
+                    self._finish_external_post_prime_override(context)
+                    return
 
                 pool_mode = _find_pool_mode(self.reported)
                 if pool_mode is None or _coerce_bool(pool_mode[1].get("st")) is not True:
+                    self._record_post_prime_transition(context, "pump_not_running")
                     self.post_prime_sync_skip_count += 1
                     self._finish_post_prime_sync("skipped", "pump_not_running")
                     return
 
                 waterfall = _find_waterfall_feature(self.reported)
                 if waterfall is not None and _coerce_bool(waterfall[1].get("st")) is True:
+                    self._record_post_prime_transition(context, "waterfall_active")
                     self.post_prime_sync_skip_count += 1
                     self._finish_post_prime_sync("skipped", "waterfall_active")
                     return
 
-                if _find_filter_controller(self.reported) is None:
+                controller_state = _mapping(self.reported.get(context.filter_key))
+                if (
+                    _norm(str(controller_state.get("et", ""))) != "fctrl"
+                    or _norm(str(controller_state.get("app", ""))) != "filt"
+                ):
+                    self._record_post_prime_transition(context, "filter_controller_missing")
                     continue
 
                 ecm0 = _mapping(self.reported.get("ecm0"))
                 if _coerce_bool(ecm0.get("st")) is not True:
+                    self._record_post_prime_transition(context, "motor_not_running")
                     continue
                 requested_speed = _coerce_number(ecm0.get("reqSpd"))
                 commanded_speed = _coerce_number(ecm0.get("cmdSpd"))
                 priming_speed = _coerce_number(ecm0.get("prmSpd"))
                 if _pump_is_priming(requested_speed, commanded_speed, priming_speed):
-                    priming_observed = True
+                    context.priming_observed = True
+                    self._record_post_prime_transition(context, "priming")
                 if not _post_prime_sync_ready(
                     requested,
                     requested_speed,
                     commanded_speed,
                     priming_speed,
-                    priming_observed,
+                    context.priming_observed,
                 ):
+                    if not context.priming_observed:
+                        self._record_post_prime_transition(context, "waiting_for_priming")
+                    elif not _pump_is_priming(requested_speed, commanded_speed, priming_speed):
+                        self._record_post_prime_transition(context, "waiting_after_priming")
                     continue
 
+                self._record_post_prime_transition(context, "ready")
                 async with self._control_lock:
+                    if not self._post_prime_sync_is_current(context):
+                        return
+                    if context.override_event.is_set():
+                        self._finish_external_post_prime_override(context)
+                        return
                     pool_mode = _find_pool_mode(self.reported)
                     waterfall = _find_waterfall_feature(self.reported)
                     ecm0 = _mapping(self.reported.get("ecm0"))
@@ -1363,26 +1465,35 @@ class TCXClient:
                             requested_speed,
                             commanded_speed,
                             priming_speed,
-                            priming_observed,
+                            context.priming_observed,
                         )
                     ):
+                        self._record_post_prime_transition(context, "readiness_changed")
                         continue
+                    self._record_post_prime_transition(context, "writing_manual_speed")
                     await self._async_set_pump_speed_locked(requested)
 
+                if context.override_event.is_set():
+                    self._finish_external_post_prime_override(context)
+                    return
                 self.post_prime_sync_success_count += 1
+                self._record_post_prime_transition(context, "manual_speed_aligned")
                 self._finish_post_prime_sync("complete", "manual_speed_aligned")
                 return
         except asyncio.CancelledError:
             raise
         except TCXError as err:
+            self._record_post_prime_transition(context, "manual_speed_write_failed")
             self._finish_post_prime_sync("failed", "manual_speed_write_failed", str(err))
             return
         except Exception as err:  # defensive background task: never fail silently
             _LOGGER.exception("Unexpected TCX post-prime synchronization failure")
+            self._record_post_prime_transition(context, "unexpected_error")
             self._finish_post_prime_sync("failed", "unexpected_error", str(err))
             return
 
         self.post_prime_sync_timeout_count += 1
+        self._record_post_prime_transition(context, "timed_out")
         self._finish_post_prime_sync("timed_out", "scheduled_speed_not_observed")
 
     async def async_set_waterfall(self, enabled: bool) -> None:
@@ -1656,6 +1767,119 @@ class TCXClient:
         structure["last_seen"] = self.last_ws_message_at
         self._recent_ws_structures.append(structure)
 
+    def _record_post_prime_transition(
+        self,
+        context: _PostPrimeSyncContext,
+        decision: str,
+        *,
+        desired_override_rpm: int | float | None = None,
+        observed_at: str | None = None,
+        device_timestamp: int | None = None,
+    ) -> None:
+        """Retain a bounded, de-duplicated trail of post-prime decisions."""
+        filter_state = _mapping(self.reported.get(context.filter_key))
+        motor_state = _mapping(self.reported.get("ecm0"))
+        pool_mode = _find_pool_mode(self.reported)
+        waterfall = _find_waterfall_feature(self.reported)
+        requested_rpm = _coerce_number(motor_state.get("reqSpd"))
+        commanded_rpm = _coerce_number(motor_state.get("cmdSpd"))
+        priming_rpm = _coerce_number(motor_state.get("prmSpd"))
+        pool_running = _coerce_bool(pool_mode[1].get("st")) if pool_mode is not None else None
+        waterfall_running = _coerce_bool(waterfall[1].get("st")) if waterfall is not None else None
+        timestamp = observed_at or _utc_now_iso()
+        transition: dict[str, Any] = {
+            "generation": context.generation,
+            "target_rpm": context.target_rpm,
+            "filter_key": context.filter_key,
+            "filter_manual_rpm": _numeric_code(filter_state.get("manSpd")),
+            "motor_manual_rpm": _numeric_code(motor_state.get("manSpd")),
+            "requested_rpm": _numeric_code(requested_rpm),
+            "commanded_rpm": _numeric_code(commanded_rpm),
+            "priming_rpm": _numeric_code(priming_rpm),
+            "pool_running": pool_running,
+            "motor_running": _coerce_bool(motor_state.get("st")),
+            "waterfall_running": waterfall_running,
+            "phase": _pump_operating_phase(
+                pool_running,
+                requested_rpm,
+                commanded_rpm,
+                priming_rpm,
+                waterfall_running,
+            ),
+            "priming_observed": context.priming_observed,
+            "decision": decision,
+            "desired_override_rpm": desired_override_rpm,
+            "first_seen": timestamp,
+            "last_seen": timestamp,
+            "count": 1,
+        }
+        observed_device_timestamp = (
+            device_timestamp if device_timestamp is not None else self.last_ws_device_timestamp
+        )
+        if observed_device_timestamp is not None:
+            transition["device_timestamp"] = observed_device_timestamp
+
+        if self._recent_post_prime_transitions:
+            previous = self._recent_post_prime_transitions[-1]
+            volatile = {"count", "first_seen", "last_seen", "device_timestamp"}
+            previous_signature = {
+                key: value for key, value in previous.items() if key not in volatile
+            }
+            current_signature = {
+                key: value for key, value in transition.items() if key not in volatile
+            }
+            if previous_signature == current_signature:
+                previous["count"] = int(previous.get("count", 1)) + 1
+                previous["last_seen"] = timestamp
+                if observed_device_timestamp is not None:
+                    previous["device_timestamp"] = observed_device_timestamp
+                return
+
+        self._recent_post_prime_transitions.append(transition)
+
+    def _handle_post_prime_desired(
+        self,
+        desired: dict[str, Any],
+        *,
+        observed_at: str | None = None,
+        device_timestamp: int | None = None,
+    ) -> None:
+        """Wake the active generation for a conflicting live manSpd command."""
+        context = self._post_prime_sync_context
+        task = self._post_prime_sync_task
+        if context is None or task is None or task.done():
+            return
+        target_state = desired.get(context.filter_key)
+        if not isinstance(target_state, dict) or "manSpd" not in target_state:
+            return
+        desired_rpm = _numeric_code(target_state.get("manSpd"))
+        if desired_rpm is None:
+            return
+        if round(float(desired_rpm)) == context.target_rpm:
+            self._record_post_prime_transition(
+                context,
+                "matching_manual_speed_desired",
+                desired_override_rpm=desired_rpm,
+                observed_at=observed_at,
+                device_timestamp=device_timestamp,
+            )
+            return
+
+        event_at = observed_at or _utc_now_iso()
+        context.external_override_rpm = desired_rpm
+        context.external_override_at = event_at
+        context.external_override_device_timestamp = device_timestamp
+        self.last_post_prime_sync_external_override_rpm = desired_rpm
+        self.last_post_prime_sync_external_override_at = event_at
+        self._record_post_prime_transition(
+            context,
+            "external_manual_speed_desired",
+            desired_override_rpm=desired_rpm,
+            observed_at=event_at,
+            device_timestamp=device_timestamp,
+        )
+        context.override_event.set()
+
     def _record_desired_payload(
         self,
         data: dict[str, Any],
@@ -1733,6 +1957,11 @@ class TCXClient:
     def recent_desired_payloads(self) -> list[dict[str, Any]]:
         """Return recent desired-state echoes for control-protocol mapping."""
         return [deepcopy(item) for item in self._recent_desired_payloads]
+
+    @property
+    def recent_post_prime_transitions(self) -> list[dict[str, Any]]:
+        """Return the bounded post-prime synchronization decision trail."""
+        return [deepcopy(item) for item in self._recent_post_prime_transitions]
 
     @property
     def recent_controller_mode_transitions(self) -> list[dict[str, Any]]:
@@ -1931,6 +2160,11 @@ class TCXClient:
                             ):
                                 self.ws_desired_messages_received += 1
                                 self._record_desired_payload(data, payload, desired)
+                                self._handle_post_prime_desired(
+                                    desired,
+                                    observed_at=self.last_ws_message_at,
+                                    device_timestamp=_extract_device_timestamp(data),
+                                )
 
                         if (
                             isinstance(data, dict)
