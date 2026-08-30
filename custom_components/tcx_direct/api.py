@@ -23,12 +23,16 @@ from .const import (
     BOOTSTRAP_SUBSCRIBE_INTERVAL,
     CONTROL_CONFIRM_TIMEOUT,
     CONTROL_NAMESPACE,
+    CONTROLLER_MODE_AUTO,
+    CONTROLLER_MODES,
     IAQUALINK_API,
+    LIGHT_COLOR_BY_CODE,
     MAX_WEBSOCKET_SESSION,
     POOL_FILTRATION_CONFIRM_TIMEOUT,
     POST_PRIME_SYNC_INTERVAL,
     POST_PRIME_SYNC_TIMEOUT,
     PUMP_POWER_CONFIRM_TIMEOUT,
+    RECENT_CONTROLLER_MODE_TRANSITIONS,
     RECENT_WS_STRUCTURES,
     RECONNECT_MAX,
     SHADOW_INTERVAL,
@@ -229,6 +233,13 @@ def _numeric_code(value: Any) -> int | float | None:
     if number is None:
         return None
     return int(number) if number.is_integer() else number
+
+
+def _controller_mode_name(code: int | float | None) -> str | None:
+    """Return a confirmed controller-mode name while preserving unknown codes."""
+    if code is None:
+        return None
+    return CONTROLLER_MODES.get(code, f"Unknown (code {code})")
 
 
 def _pump_operating_phase(
@@ -623,35 +634,19 @@ def normalize_tcx_state(reported: dict[str, Any]) -> dict[str, Any]:
     pool_light = _find_pool_light(reported)
     pool_light_state = pool_light[1] if pool_light is not None else {}
     light_state = _coerce_bool(pool_light_state.get("st"))
-    light_color_raw = _coerce_number(pool_light_state.get("currClr"))
-    light_color = int(light_color_raw) if light_color_raw is not None else None
+    # cmdClr is the selected color/program written by the official client and
+    # remains stable while animated programs advance currClr internally.
+    # Fall back to currClr for older/sparser reported-state documents.
+    light_color = _numeric_code(pool_light_state.get("cmdClr"))
+    if light_color is None:
+        light_color = _numeric_code(pool_light_state.get("currClr"))
 
-    # currClr falls back to 0 while this controller's light is off, while
-    # cmdClr/svdClr may retain the previous selection. Do not expose a stale or
-    # contradictory current color for equipment that is explicitly off.
+    # cmdClr/currClr/svdClr can retain the previous selection while the light
+    # is off. Do not expose a stale color for equipment that is explicitly off.
     if light_state is False:
         light_color = None
 
-    # AquaLink's P-Series/IntelliBrite emulation sequence. This controller's
-    # captured state confirms currClr=3 is reported by the legacy client as
-    # Romance.
-    pseries_colors = {
-        1: "SAm Mode",
-        2: "Party Mode",
-        3: "Romance",
-        4: "Caribbean",
-        5: "American",
-        6: "California Sunset",
-        7: "Royal",
-        8: "Blue",
-        9: "Green",
-        10: "Red",
-        11: "White",
-        12: "Magenta",
-        13: "Hold",
-        14: "Recall",
-    }
-    light_color_name = pseries_colors.get(light_color)
+    light_color_name = LIGHT_COLOR_BY_CODE.get(light_color)
 
     # ---- Optional salt-water chlorinator ----------------------------------
     # Only expose a value when the controller actually reports an object that
@@ -690,11 +685,10 @@ def normalize_tcx_state(reported: dict[str, Any]) -> dict[str, Any]:
         water_setpoint = _tcx_temperature(tsp.get("waterTempSet"))
 
     system_mode_code = _numeric_code(reported.get("systemMode"))
-    controller_mode = None
-    if system_mode_code == 1:
-        controller_mode = "Auto"
-    elif system_mode_code is not None:
-        controller_mode = f"Unknown (code {system_mode_code})"
+    controller_mode = _controller_mode_name(system_mode_code)
+    remote_control_available = (
+        system_mode_code == CONTROLLER_MODE_AUTO if system_mode_code is not None else None
+    )
 
     freeze_protection_setpoint = _coerce_number(reported.get("freezeSP"))
 
@@ -715,6 +709,7 @@ def normalize_tcx_state(reported: dict[str, Any]) -> dict[str, Any]:
         "pump_speed_control_supported": pump_speed_control_supported,
         "light_power_setpoint": light_state,
         "light_control_supported": pool_light is not None,
+        "light_color_control_supported": pool_light is not None,
         "pump_preset": pump_preset,
         "swc_level": _coerce_number(swc_raw),
         "light_color": light_color,
@@ -724,6 +719,7 @@ def normalize_tcx_state(reported: dict[str, Any]) -> dict[str, Any]:
         "waterfall": waterfall_state,
         "controller_mode": controller_mode,
         "system_mode_code": system_mode_code,
+        "remote_control_available": remote_control_available,
         "freeze_protection_setpoint": freeze_protection_setpoint,
         "wifi_rssi": wifi_rssi,
         "firmware_version": reported.get("firmwareVersion"),
@@ -806,6 +802,9 @@ class TCXClient:
         self._recent_ws_structures: deque[dict[str, Any]] = deque(maxlen=RECENT_WS_STRUCTURES)
         self._ws_structure_counts: dict[str, int] = {}
         self._recent_desired_payloads: deque[dict[str, Any]] = deque(maxlen=20)
+        self._recent_controller_mode_transitions: deque[dict[str, Any]] = deque(
+            maxlen=RECENT_CONTROLLER_MODE_TRANSITIONS
+        )
 
         self._state_callback: StateCallback | None = None
         self._status_callback: StatusCallback | None = None
@@ -1064,6 +1063,12 @@ class TCXClient:
             self.shadow_poll_interval = SHADOW_INTERVAL
             self.last_shadow_update_at = _utc_now_iso()
             self.shadow_success_count += 1
+            self._record_controller_mode(
+                reported,
+                "shadow",
+                observed_at=self.last_shadow_update_at,
+                device_timestamp=_extract_device_timestamp(data),
+            )
             _deep_merge(self.reported, reported)
             return data
 
@@ -1151,6 +1156,13 @@ class TCXClient:
         refresh_on_timeout: bool = False,
     ) -> None:
         """Send one serialized TCX command and require reported confirmation."""
+        system_mode_code = _numeric_code(self.reported.get("systemMode"))
+        if system_mode_code is not None and system_mode_code != CONTROLLER_MODE_AUTO:
+            controller_mode = _controller_mode_name(system_mode_code)
+            raise TCXControlUnsupported(
+                f"TCX controller is in {controller_mode} mode; {description} requires Auto mode"
+            )
+
         ws = self._ws
         if ws is None or ws.closed or not self.websocket_connected:
             raise TCXConnectionError(
@@ -1530,6 +1542,33 @@ class TCXClient:
                 ),
             )
 
+    async def async_set_pool_light_color(self, color_code: int) -> None:
+        """Set the selected pool-light color/program while the light is on."""
+        if isinstance(color_code, bool) or color_code not in LIGHT_COLOR_BY_CODE:
+            raise TCXControlUnsupported("Pool light color must be a confirmed code from 1 to 14")
+        requested = int(color_code)
+
+        async with self._control_lock:
+            pool_light = _find_pool_light(self.reported)
+            if pool_light is None:
+                raise TCXControlUnsupported(
+                    "This TCX controller has no confirmed JL/POOL_LT pool light"
+                )
+            light_key, light_state = pool_light
+            if _coerce_bool(light_state.get("st")) is not True:
+                raise TCXControlUnsupported("Turn on the pool light before selecting a color")
+            if _numeric_code(light_state.get("cmdClr")) == requested:
+                return
+
+            await self._async_send_control(
+                {light_key: {"cmdClr": requested}},
+                "pool light color",
+                lambda reported: (
+                    (confirmed := _find_pool_light(reported)) is not None
+                    and _numeric_code(confirmed[1].get("cmdClr")) == requested
+                ),
+            )
+
     async def async_set_pump_speed(self, speed: float) -> None:
         """Set the filtration controller's manual speed and await confirmation."""
         await self._async_cancel_post_prime_sync("manual_speed_commanded")
@@ -1628,6 +1667,36 @@ class TCXClient:
             }
         )
 
+    def _record_controller_mode(
+        self,
+        reported: dict[str, Any],
+        source: str,
+        *,
+        observed_at: str | None = None,
+        device_timestamp: int | None = None,
+    ) -> None:
+        """Retain actual controller-mode transitions for future diagnostics."""
+        if "systemMode" not in reported:
+            return
+        code = _numeric_code(reported.get("systemMode"))
+        if code is None:
+            return
+        if (
+            self._recent_controller_mode_transitions
+            and self._recent_controller_mode_transitions[-1].get("code") == code
+        ):
+            return
+
+        transition: dict[str, Any] = {
+            "observed_at": observed_at or _utc_now_iso(),
+            "source": source,
+            "code": code,
+            "mode": _controller_mode_name(code),
+        }
+        if device_timestamp is not None:
+            transition["device_timestamp"] = device_timestamp
+        self._recent_controller_mode_transitions.append(transition)
+
     @property
     def recent_ws_structures(self) -> list[dict[str, Any]]:
         return [deepcopy(item) for item in self._recent_ws_structures]
@@ -1636,6 +1705,11 @@ class TCXClient:
     def recent_desired_payloads(self) -> list[dict[str, Any]]:
         """Return recent desired-state echoes for control-protocol mapping."""
         return [deepcopy(item) for item in self._recent_desired_payloads]
+
+    @property
+    def recent_controller_mode_transitions(self) -> list[dict[str, Any]]:
+        """Return recent distinct controller-mode transitions."""
+        return [deepcopy(item) for item in self._recent_controller_mode_transitions]
 
     @property
     def control_status(self) -> str:
@@ -1855,6 +1929,12 @@ class TCXClient:
                             stamp = _extract_device_timestamp(data)
                             if stamp is not None:
                                 self.last_ws_device_timestamp = stamp
+                            self._record_controller_mode(
+                                reported,
+                                "websocket",
+                                observed_at=self.last_ws_message_at,
+                                device_timestamp=stamp,
+                            )
                             await self._notify_state("websocket")
                     elif msg.type in (
                         aiohttp.WSMsgType.CLOSED,

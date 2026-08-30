@@ -88,11 +88,13 @@ def test_normalize_observed_tcx_state() -> None:
     assert normalized["light"] is True
     assert normalized["light_power_setpoint"] is True
     assert normalized["light_control_supported"] is True
+    assert normalized["light_color_control_supported"] is True
     assert normalized["light_color"] == 3
-    assert normalized["light_color_name"] == "Romance"
+    assert normalized["light_color_name"] == "Cobalt Blue"
     assert normalized["waterfall"] is False
     assert normalized["controller_mode"] == "Auto"
     assert normalized["system_mode_code"] == 1
+    assert normalized["remote_control_available"] is True
     assert normalized["freeze_protection_setpoint"] == 33
     assert normalized["swc_level"] is None
 
@@ -124,6 +126,25 @@ def test_unknown_controller_mode_preserves_raw_code() -> None:
 
     assert normalized["controller_mode"] == "Unknown (code 7)"
     assert normalized["system_mode_code"] == 7
+    assert normalized["remote_control_available"] is False
+
+
+@pytest.mark.parametrize(
+    ("code", "name"),
+    [
+        (1, "Auto"),
+        (2, "Quick Clean"),
+        (3, "Service"),
+        (4, "Time Out"),
+        (5, "Transitioning"),
+    ],
+)
+def test_confirmed_controller_modes(code: int, name: str) -> None:
+    normalized = api.normalize_tcx_state({"systemMode": code})
+
+    assert normalized["controller_mode"] == name
+    assert normalized["system_mode_code"] == code
+    assert normalized["remote_control_available"] is (code == 1)
 
 
 @pytest.mark.parametrize(
@@ -296,7 +317,7 @@ def test_light_color_clears_when_light_is_off() -> None:
                 "et": "JL",
                 "app": "POOL_LT",
                 "st": 0,
-                "currClr": 0,
+                "currClr": 3,
                 "cmdClr": 3,
                 "svdClr": 3,
             }
@@ -306,6 +327,42 @@ def test_light_color_clears_when_light_is_off() -> None:
     assert normalized["light"] is False
     assert normalized["light_color"] is None
     assert normalized["light_color_name"] is None
+
+
+@pytest.mark.parametrize(
+    ("code", "name"),
+    [
+        (1, "Alpine White"),
+        (2, "Sky Blue"),
+        (3, "Cobalt Blue"),
+        (4, "Caribbean Blue"),
+        (5, "Spring Green"),
+        (6, "Emerald Green"),
+        (7, "Emerald Rose"),
+        (8, "Magenta"),
+        (9, "Violet"),
+        (10, "Slow Color Splash"),
+        (11, "Fast Color Splash"),
+        (12, "America The Beautiful"),
+        (13, "Fat Tuesday"),
+        (14, "Disco Tech"),
+    ],
+)
+def test_confirmed_pool_light_color_names(code: int, name: str) -> None:
+    normalized = api.normalize_tcx_state(
+        {
+            "auxz0": {
+                "et": "JL",
+                "app": "POOL_LT",
+                "st": 1,
+                "cmdClr": code,
+                "currClr": 99,
+            }
+        }
+    )
+
+    assert normalized["light_color"] == code
+    assert normalized["light_color_name"] == name
 
 
 def test_pool_light_requires_confirmed_equipment_type() -> None:
@@ -325,7 +382,7 @@ def test_derived_values_clear_when_equipment_turns_off() -> None:
     current = {
         "light": True,
         "light_color": 3,
-        "light_color_name": "Romance",
+        "light_color_name": "Cobalt Blue",
         "pump": True,
         "pump_preset": "Waterfall",
     }
@@ -996,6 +1053,83 @@ def test_pool_light_control_targets_confirmed_light_and_waits_for_report() -> No
     assert client.control_success_counts["pool light state"] == 1
 
 
+def test_pool_light_color_control_targets_cmdclr_and_waits_for_report() -> None:
+    client = make_client()
+    client.user_id = "12345"
+    client.websocket_connected = True
+    client.reported = {
+        "systemMode": 1,
+        "auxz4": {
+            "fr": "Pool Light",
+            "et": "JL",
+            "app": "POOL_LT",
+            "st": 1,
+            "cmdClr": 3,
+            "currClr": 3,
+        },
+    }
+
+    class FakeWebSocket:
+        closed = False
+
+        def __init__(self) -> None:
+            self.messages: list[dict[str, object]] = []
+
+        async def send_json(self, message: dict[str, object]) -> None:
+            self.messages.append(message)
+            client.reported["auxz4"]["cmdClr"] = 12
+            client._resolve_pending_control()
+
+    websocket = FakeWebSocket()
+    client._ws = websocket  # type: ignore[assignment]
+
+    asyncio.run(client.async_set_pool_light_color(12))
+
+    assert websocket.messages[0]["namespace"] == "tcx"
+    assert websocket.messages[0]["payload"]["state"]["desired"] == {"auxz4": {"cmdClr": 12}}
+    assert client.control_command_counts["pool light color"] == 1
+    assert client.control_success_counts["pool light color"] == 1
+
+
+def test_pool_light_color_control_requires_light_on() -> None:
+    client = make_client()
+    client.reported = {
+        "systemMode": 1,
+        "auxz0": {"et": "JL", "app": "POOL_LT", "st": 0, "cmdClr": 3},
+    }
+
+    with pytest.raises(api.TCXControlUnsupported, match="Turn on the pool light"):
+        asyncio.run(client.async_set_pool_light_color(4))
+
+    assert client.control_command_count == 0
+
+
+def test_non_auto_mode_blocks_control_before_transmission() -> None:
+    client = make_client()
+    client.user_id = "12345"
+    client.websocket_connected = True
+    client.reported = {"systemMode": 3}
+
+    class FakeWebSocket:
+        closed = False
+
+        def __init__(self) -> None:
+            self.messages: list[dict[str, object]] = []
+
+        async def send_json(self, message: dict[str, object]) -> None:
+            self.messages.append(message)
+
+    websocket = FakeWebSocket()
+    client._ws = websocket  # type: ignore[assignment]
+
+    with pytest.raises(api.TCXControlUnsupported, match="Service mode.*requires Auto mode"):
+        asyncio.run(client._async_send_control({}, "test command", lambda _reported: True))
+
+    assert websocket.messages == []
+    assert client.control_command_count == 0
+    assert client.control_failure_count == 0
+
+
 def test_pump_speed_control_targets_filter_controller_and_enforces_limits() -> None:
     client = make_client()
     client.user_id = "12345"
@@ -1115,6 +1249,42 @@ def test_desired_payloads_are_deduplicated() -> None:
     assert records[0]["first_seen"] == "first"
     assert records[0]["last_seen"] == "second"
     assert records[0]["timestamp"] == 2
+
+
+def test_controller_mode_transitions_are_retained_and_deduplicated() -> None:
+    client = make_client()
+
+    client._record_controller_mode(
+        {"systemMode": 1}, "shadow", observed_at="first", device_timestamp=10
+    )
+    client._record_controller_mode({"systemMode": 1}, "websocket", observed_at="duplicate")
+    client._record_controller_mode(
+        {"systemMode": 3}, "websocket", observed_at="second", device_timestamp=20
+    )
+    client._record_controller_mode({"systemMode": 5}, "websocket", observed_at="third")
+
+    assert client.recent_controller_mode_transitions == [
+        {
+            "observed_at": "first",
+            "source": "shadow",
+            "code": 1,
+            "mode": "Auto",
+            "device_timestamp": 10,
+        },
+        {
+            "observed_at": "second",
+            "source": "websocket",
+            "code": 3,
+            "mode": "Service",
+            "device_timestamp": 20,
+        },
+        {
+            "observed_at": "third",
+            "source": "websocket",
+            "code": 5,
+            "mode": "Transitioning",
+        },
+    ]
 
 
 def test_shadow_failures_are_counted(monkeypatch: pytest.MonkeyPatch) -> None:

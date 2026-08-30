@@ -128,6 +128,12 @@ async def async_get_config_entry_diagnostics(
             "last_failure_command": client.last_control_failure_description,
             "last_failure_error": client.last_control_failure_error,
         },
+        "controller_mode": {
+            "mode": coordinator.normalized.get("controller_mode"),
+            "code": coordinator.normalized.get("system_mode_code"),
+            "remote_control_available": coordinator.normalized.get("remote_control_available"),
+            "recent_transitions": client.recent_controller_mode_transitions,
+        },
         "post_prime_sync": {
             "interval_seconds": POST_PRIME_SYNC_INTERVAL,
             "timeout_seconds": POST_PRIME_SYNC_TIMEOUT,

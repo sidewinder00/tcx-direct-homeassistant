@@ -70,6 +70,7 @@ class TCXPumpSpeedNumber(TCXEntity, NumberEntity):
     def available(self) -> bool:
         return (
             super().available
+            and (self.coordinator.data or {}).get("remote_control_available") is not False
             and (self.coordinator.data or {}).get("pump_speed_control_supported") is True
             and self._number("pump_speed_setpoint") is not None
             and self._number("pump_min_rpm") is not None
@@ -115,6 +116,7 @@ class TCXPoolFiltrationPresetNumber(TCXEntity, NumberEntity):
     def available(self) -> bool:
         return (
             super().available
+            and (self.coordinator.data or {}).get("remote_control_available") is not False
             and (self.coordinator.data or {}).get("pool_filtration_preset_control_supported")
             is True
             and self._number("pool_filtration_preset") is not None
@@ -162,6 +164,7 @@ class TCXWaterfallRPMNumber(TCXEntity, NumberEntity):
         data = self.coordinator.data or {}
         return (
             super().available
+            and data.get("remote_control_available") is not False
             and isinstance(data.get("waterfall"), bool)
             and data.get("pump_speed_control_supported") is True
             and self._number("pump_min_rpm") is not None

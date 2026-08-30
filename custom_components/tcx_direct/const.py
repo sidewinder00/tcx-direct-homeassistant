@@ -2,7 +2,7 @@ from __future__ import annotations
 
 DOMAIN = "tcx_direct"
 NAME = "Jandy TCX Direct"
-VERSION = "0.2.5"
+VERSION = "0.2.6"
 
 ATTR_RPM = "rpm"
 SERVICE_START_PUMP_AT_SPEED = "start_pump_at_speed"
@@ -20,7 +20,34 @@ CONF_WATERFALL_RPM = "waterfall_rpm"
 
 DEFAULT_WATERFALL_RPM = 2850
 
-PLATFORMS = ["sensor", "binary_sensor", "button", "switch", "number"]
+PLATFORMS = ["sensor", "binary_sensor", "button", "switch", "number", "select"]
+
+CONTROLLER_MODE_AUTO = 1
+CONTROLLER_MODES = {
+    1: "Auto",
+    2: "Quick Clean",
+    3: "Service",
+    4: "Time Out",
+    5: "Transitioning",
+}
+
+LIGHT_COLOR_BY_CODE = {
+    1: "Alpine White",
+    2: "Sky Blue",
+    3: "Cobalt Blue",
+    4: "Caribbean Blue",
+    5: "Spring Green",
+    6: "Emerald Green",
+    7: "Emerald Rose",
+    8: "Magenta",
+    9: "Violet",
+    10: "Slow Color Splash",
+    11: "Fast Color Splash",
+    12: "America The Beautiful",
+    13: "Fat Tuesday",
+    14: "Disco Tech",
+}
+LIGHT_COLOR_BY_NAME = {name: code for code, name in LIGHT_COLOR_BY_CODE.items()}
 
 SHADOW_INTERVAL = 120
 SHADOW_RATE_LIMIT_MAX_INTERVAL = 1800
@@ -30,6 +57,7 @@ MAX_WEBSOCKET_SESSION = 21600
 WEBSOCKET_STALE_SECONDS = 1800
 WATCHDOG_RESUBSCRIBE_TIMEOUT = 15
 RECENT_WS_STRUCTURES = 20
+RECENT_CONTROLLER_MODE_TRANSITIONS = 20
 BOOTSTRAP_SUBSCRIBE_INTERVAL = 3
 BOOTSTRAP_SUBSCRIBE_ATTEMPTS = 4
 CONTROL_CONFIRM_TIMEOUT = 15

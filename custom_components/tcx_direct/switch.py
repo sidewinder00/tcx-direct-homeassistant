@@ -40,6 +40,7 @@ class TCXPumpPowerSwitch(TCXEntity, SwitchEntity):
         data = self.coordinator.data or {}
         return (
             super().available
+            and data.get("remote_control_available") is not False
             and data.get("pump_power_control_supported") is True
             and isinstance(data.get("pump_power_setpoint"), bool)
         )
@@ -84,6 +85,7 @@ class TCXPoolLightSwitch(TCXEntity, SwitchEntity):
         data = self.coordinator.data or {}
         return (
             super().available
+            and data.get("remote_control_available") is not False
             and data.get("light_control_supported") is True
             and isinstance(data.get("light_power_setpoint"), bool)
         )
@@ -121,6 +123,7 @@ class TCXWaterfallSwitch(TCXEntity, SwitchEntity):
         data = self.coordinator.data or {}
         return (
             super().available
+            and data.get("remote_control_available") is not False
             and isinstance(data.get("waterfall"), bool)
             and data.get("pump_speed_control_supported") is True
             and isinstance(data.get("pump_min_rpm"), (int, float))

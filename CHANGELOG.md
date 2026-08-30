@@ -2,6 +2,21 @@
 
 All notable changes to Jandy TCX Direct are documented here.
 
+## [0.2.6] - 2026-08-29
+
+### Added
+- Add a Pool Light Color select with all 14 confirmed Jandy color and show-program names. Color changes use the observed `cmdClr` write and require the light to already be on.
+- Retain the latest distinct controller-mode transitions in diagnostics with timestamps, numeric codes, labels, and data sources.
+
+### Changed
+- Map all observed controller modes: Auto, Quick Clean, Service, Time Out, and Transitioning.
+- Disable writable equipment entities outside Auto mode and reject direct control calls before transmission while any known or unknown non-Auto code is active. Controller mode remains read-only and is never changed automatically.
+- Use the stable reported `cmdClr` selection for pool-light color and program state, with `currClr` retained only as a compatibility fallback.
+
+### Fixed
+- Replace the provisional pool-light color table with the controller's confirmed Alpine White through Disco Tech sequence.
+- Continue treating `st = 0` as the authoritative off state even when TCX retains a nonzero color code.
+
 ## [0.2.5] - 2026-08-28
 
 ### Added

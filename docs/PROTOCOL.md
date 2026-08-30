@@ -122,8 +122,8 @@ The observed `value` representation is tenths of a degree Celsius, so `328` deco
 Observed fields include:
 
 - `st` — light state
-- `currClr` — current color number
-- `cmdClr`
+- `currClr` — current physical color/phase
+- `cmdClr` — selected color or show program
 - `lockClr`
 - `statClr`
 - `svdClr`
@@ -131,7 +131,30 @@ Observed fields include:
 - `app` — application/equipment type
 - `present`
 
-Observed `currClr = 3` matched the legacy TCX client display name **Romance**. The integration currently carries the P-Series/IntelliBrite-style color-name table used by that controller behavior.
+The controller and official client use this confirmed `cmdClr` sequence:
+
+| Code | Color or program |
+| ---: | --- |
+| 1 | Alpine White |
+| 2 | Sky Blue |
+| 3 | Cobalt Blue |
+| 4 | Caribbean Blue |
+| 5 | Spring Green |
+| 6 | Emerald Green |
+| 7 | Emerald Rose |
+| 8 | Magenta |
+| 9 | Violet |
+| 10 | Slow Color Splash |
+| 11 | Fast Color Splash |
+| 12 | America The Beautiful |
+| 13 | Fat Tuesday |
+| 14 | Disco Tech |
+
+`cmdClr` is the selected color/program and is therefore the stable source for
+Home Assistant. `currClr` can change internally during an animated program and
+is only a compatibility fallback when `cmdClr` is absent. `st = 0` is the
+authoritative Off state; TCX can retain nonzero `cmdClr`, `currClr`, and
+`svdClr` values while the light is off.
 
 The tested controller identifies this object with `et: "JL"` and
 `app: "POOL_LT"`. Captured official-client traffic changed only `st` for
@@ -142,11 +165,20 @@ normal light power operation:
 {"auxz0": {"st": 0}}
 ```
 
-v0.1.13 discovers the light object from that type pair instead of assuming its
-index, sends the desired state through the `tcx` device namespace, and waits
-for the requested `st` value to be reported back. Light color remains a
-read-only sensor because a color-write command has not yet been captured and
-validated.
+TCX Direct discovers the light object from that type pair instead of assuming
+its index, sends the desired state through the `tcx` device namespace, and
+waits for the requested `st` value to be reported back.
+
+Captured official-client traffic changes the selected color/program with:
+
+```json
+{"auxz0": {"cmdClr": 3}}
+```
+
+v0.2.6 exposes this as a select while the light is already on. It dynamically
+uses the discovered light key, sends only `cmdClr`, and confirms against the
+reported `cmdClr`. It does not send `rstClr` and does not turn the light on as
+a side effect of selecting a color.
 
 ### Pool mode/valve state: `pool`
 
@@ -234,12 +266,25 @@ target but `cmdSpd` still reports priming is deferred until both values match.
 
 ### Controller operating mode: `systemMode`
 
-The controller reports a top-level numeric `systemMode`. A diagnostic captured
-immediately after the physical TCX panel was returned to Auto reported
-`systemMode = 1`, so v0.2.5 maps only code `1` to **Auto**. Other numeric values
-are retained and displayed as `Unknown (code N)` until a diagnostic is captured
-while the physical panel shows the corresponding mode. TCX Direct does not
-write `systemMode` or automatically override a local maintenance lockout.
+The controller reports a top-level numeric `systemMode`. Direct physical-panel
+testing confirmed:
+
+| Code | Controller mode |
+| ---: | --- |
+| 1 | Auto |
+| 2 | Quick Clean |
+| 3 | Service |
+| 4 | Time Out |
+| 5 | Transitioning |
+
+Other numeric values are retained and displayed as `Unknown (code N)`. TCX
+Direct does not write `systemMode` or automatically override a local
+maintenance lockout. Starting in v0.2.6, equipment controls are unavailable
+outside Auto and the client checks the latest reported code immediately before
+every outgoing equipment command. Any known or unknown non-Auto value rejects
+the command locally before transmission. Diagnostics retain the latest 20
+distinct mode transitions with their observation time, source, code, and
+label.
 
 ### Waterfall feature relay: `fcr0`
 
@@ -300,7 +345,7 @@ Observed controller-level fields include:
 - `site` configuration
 - `equipment.ecm.ecm0` motor identification data
 
-v0.2.5 exposes `freezeSP` as a read-only diagnostic. The captured controller
+v0.2.5 and later expose `freezeSP` as a read-only diagnostic. The captured controller
 reported `33`; the entity deliberately omits a unit until the field's unit
 behavior is independently confirmed. Control of this value is not implemented.
 
