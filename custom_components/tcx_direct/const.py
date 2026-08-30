@@ -2,7 +2,7 @@ from __future__ import annotations
 
 DOMAIN = "tcx_direct"
 NAME = "Jandy TCX Direct"
-VERSION = "0.2.6"
+VERSION = "0.2.7"
 
 ATTR_RPM = "rpm"
 SERVICE_START_PUMP_AT_SPEED = "start_pump_at_speed"
