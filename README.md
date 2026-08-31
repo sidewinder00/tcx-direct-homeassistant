@@ -2,10 +2,26 @@
 
 A Home Assistant custom integration for Jandy / Fluidra AquaLink TCX controllers.
 
+> [!CAUTION]
+> **Experimental personal project — not ready for general installation**
+>
+> This repository is published for development visibility and personal testing. The
+> integration is under active development, has not been validated across different
+> TCX installations, and may stop working when the unofficial cloud protocol or
+> controller firmware changes.
+>
+> It can issue commands to pool equipment. Bugs, connectivity failures, or unexpected
+> controller behavior could cause equipment to start, stop, or change settings. Do
+> not rely on it as a safety control, do not bypass manufacturer safety interlocks,
+> and do not use it for unattended equipment control.
+>
+> **No license is granted. All rights are reserved.** This is public source code, not
+> an open-source release or an invitation for third-party installation.
+
 TCX Direct connects Home Assistant directly to the iAquaLink/Zodiac cloud. It does **not** require a Supervisor add-on, separate container, local HTTP bridge, or the legacy Jandy TCX Client add-on.
 
 > [!IMPORTANT]
-> This is an unofficial community integration built against reverse-engineered iAquaLink/TCX cloud behavior. It is not affiliated with or supported by Jandy or Fluidra.
+> This is an unofficial personal integration built against reverse-engineered iAquaLink/TCX cloud behavior. It is not affiliated with or supported by Jandy or Fluidra.
 
 ## Current version
 
@@ -89,9 +105,13 @@ The integration is designed around the failure mode where an iAquaLink/TCX conne
 - Explicit live/cached-state and last-reported-equipment-state diagnostics
 - Last command result and failure details independent from transport health
 
-## Installation
+## Development installation
 
 Home Assistant 2026.8.0 or newer is required.
+
+These instructions are retained for the repository owner's controlled development
+environment. They are not a recommendation or supported installation path for other
+systems.
 
 ### Manual
 
@@ -115,7 +135,8 @@ Enter your normal iAquaLink email address and password.
 
 ### HACS custom repository
 
-This repository includes `hacs.json` and can be added as a custom **Integration** repository in HACS.
+The repository retains `hacs.json` for the owner's development installation. Its
+presence does not mean the integration is ready or offered for public installation.
 
 ## Diagnostics
 
@@ -138,3 +159,13 @@ The transport implementation was informed by public reverse-engineering work aro
 ## Validation
 
 Every push and pull request runs a validation workflow that checks Ruff formatting and linting, runs the test suite, compiles the integration, validates its Home Assistant metadata, JSON files, and English translations, and confirms that the release version matches across `const.py`, `manifest.json`, README, and the changelog.
+
+## License and contributions
+
+No license is granted for this repository. All rights are reserved by the repository
+owner, except for the limited rights necessarily provided by GitHub's Terms of
+Service. Permission is not granted to copy, modify, distribute, sublicense, or create
+derivative works from this project.
+
+External contributions are not currently accepted. A license and contribution policy
+will be added if the project is opened for general use in the future.

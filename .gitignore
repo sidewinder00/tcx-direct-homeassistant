@@ -3,7 +3,34 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .venv/
+.coverage
+coverage.xml
+htmlcov/
 .DS_Store
 .vscode/
 .idea/
+
+# Local archives and build artifacts
 *.zip
+*.tar
+*.tar.gz
+*.tgz
+
+# Home Assistant runtime data, diagnostics, traces, and logs
+.storage/
+config_entry-*.json
+trace*.json
+home-assistant*.log
+*.log
+home-assistant_v2.db*
+secrets.yaml
+
+# Local credentials, environment files, and private keys
+.env
+.env.*
+!.env.example
+credentials*.json
+*.pem
+*.key
+*.p12
+*.pfx
