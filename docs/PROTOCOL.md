@@ -362,6 +362,26 @@ Waterfall RPM number while the relay is active applies the new speed
 immediately. If the speed command fails during turn-on, the integration tries
 to return the relay to off rather than leaving a partially applied command.
 
+Diagnostics captured before v0.2.11 confirmed that turning the relay off did
+not make TCX restore the Pool Filtration speed automatically. The pump retained
+the Waterfall `manSpd` until the schedule controller was run again. Beginning
+with v0.2.11, TCX Direct confirms the relay-off command first and then, when
+Pool Filtration and the motor remain running, reads the current persistent
+`BD1_F` preset and writes that value to the dynamically discovered filtration
+controller. The two desired-state deltas remain isolated:
+
+```json
+{"fcr0": {"st": 0}}
+{"filt0": {"manSpd": 1100}}
+```
+
+The example keys and speed above are from the tested controller; both equipment
+keys and the restoration RPM are discovered at runtime. An already-off relay,
+a stopped filtration mode or motor, or a missing `BD1_F` preset suppresses the
+speed write. If restoration fails after the relay is confirmed off, TCX Direct
+reports a distinct `waterfall speed restore` control failure and does not turn
+the Waterfall back on.
+
 ## Device/configuration fields
 
 Observed controller-level fields include:

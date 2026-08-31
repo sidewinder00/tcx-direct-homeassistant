@@ -350,6 +350,16 @@ def _find_speed_preset(speed_list: Any, app: str) -> dict[str, Any] | None:
     return None
 
 
+def _pool_filtration_preset_speed(reported: dict[str, Any]) -> float | None:
+    """Return the persistent BD1_F speed from the confirmed controller state."""
+    preset = _find_speed_preset(_mapping(reported.get("ecm0")).get("spdList"), "BD1_F")
+    if preset is None:
+        controller = _find_filter_controller(reported)
+        if controller is not None:
+            preset = _find_speed_preset(controller[1].get("spdList"), "BD1_F")
+    return _coerce_number(preset.get("speed")) if preset is not None else None
+
+
 def _utc_now_iso() -> str:
     """Return an ISO UTC timestamp for diagnostics."""
     return datetime.now(timezone.utc).isoformat()
@@ -1498,25 +1508,67 @@ class TCXClient:
 
     async def async_set_waterfall(self, enabled: bool) -> None:
         """Set the captured TCX waterfall feature and await reported state."""
-        if enabled:
-            await self._async_cancel_post_prime_sync("waterfall_commanded")
+        if not enabled:
+            await self._async_disable_waterfall_and_restore_filtration()
+            return
+        await self._async_cancel_post_prime_sync("waterfall_commanded")
+        async with self._control_lock:
+            await self._async_set_waterfall_locked(True)
+
+    async def _async_set_waterfall_locked(self, enabled: bool) -> bool | None:
+        """Set Waterfall while locked and return its state before the command."""
+        feature = _find_waterfall_feature(self.reported)
+        if feature is None:
+            raise TCXControlUnsupported(
+                "This TCX controller has no confirmed FRLY/WF waterfall feature"
+            )
+        feature_key, feature_state = feature
+        previous = _coerce_bool(feature_state.get("st"))
+        if previous is enabled:
+            return previous
+        await self._async_send_control(
+            {feature_key: {"st": int(enabled)}},
+            "waterfall state",
+            lambda reported: (
+                (confirmed := _find_waterfall_feature(reported)) is not None
+                and _coerce_bool(confirmed[1].get("st")) is enabled
+            ),
+        )
+        return previous
+
+    async def _async_disable_waterfall_and_restore_filtration(self) -> None:
+        """Disable Waterfall and restore the persistent Pool Filtration RPM."""
         async with self._control_lock:
             feature = _find_waterfall_feature(self.reported)
             if feature is None:
                 raise TCXControlUnsupported(
                     "This TCX controller has no confirmed FRLY/WF waterfall feature"
                 )
-            feature_key, feature_state = feature
-            current = _coerce_bool(feature_state.get("st"))
-            if current is enabled:
+            if _coerce_bool(feature[1].get("st")) is True:
+                await self._async_cancel_post_prime_sync("waterfall_commanded")
+            waterfall_was_on = await self._async_set_waterfall_locked(False)
+            if waterfall_was_on is not True:
                 return
-            await self._async_send_control(
-                {feature_key: {"st": int(enabled)}},
-                "waterfall state",
-                lambda reported: (
-                    (confirmed := _find_waterfall_feature(reported)) is not None
-                    and _coerce_bool(confirmed[1].get("st")) is enabled
-                ),
+
+            pool_mode = _find_pool_mode(self.reported)
+            motor_state = _mapping(self.reported.get("ecm0"))
+            if (
+                pool_mode is None
+                or _coerce_bool(pool_mode[1].get("st")) is not True
+                or _coerce_bool(motor_state.get("st")) is not True
+            ):
+                return
+
+            filtration_speed = _pool_filtration_preset_speed(self.reported)
+            if filtration_speed is None:
+                _LOGGER.warning(
+                    "Waterfall is off, but TCX did not report a BD1_F Pool Filtration "
+                    "preset; manual pump speed was not changed"
+                )
+                return
+            await self._async_set_pump_speed_locked(
+                filtration_speed,
+                description="waterfall speed restore",
             )
 
     async def async_set_waterfall_with_speed(self, speed: float) -> None:
@@ -1529,7 +1581,7 @@ class TCXClient:
                 await self.async_set_waterfall(False)
             except TCXError as rollback_error:
                 _LOGGER.warning(
-                    "Unable to turn Waterfall back off after its RPM command failed: %s",
+                    "Unable to restore Pool Filtration after the Waterfall RPM command failed: %s",
                     rollback_error,
                 )
             raise
@@ -1714,7 +1766,12 @@ class TCXClient:
         async with self._control_lock:
             await self._async_set_pump_speed_locked(speed)
 
-    async def _async_set_pump_speed_locked(self, speed: float) -> None:
+    async def _async_set_pump_speed_locked(
+        self,
+        speed: float,
+        *,
+        description: str = "pump speed",
+    ) -> None:
         """Set manual speed while the caller holds the serialized control lock."""
         controller = _find_filter_controller(self.reported)
         if controller is None:
@@ -1742,7 +1799,7 @@ class TCXClient:
             return
         await self._async_send_control(
             {controller_key: {"manSpd": requested}},
-            "pump speed",
+            description,
             lambda reported: (
                 (confirmed := _find_filter_controller(reported)) is not None
                 and (actual := _coerce_number(confirmed[1].get("manSpd"))) is not None

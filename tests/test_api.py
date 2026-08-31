@@ -608,6 +608,230 @@ def test_waterfall_with_speed_confirms_relay_then_sets_manual_rpm() -> None:
     assert client.control_success_count == 2
 
 
+def test_waterfall_off_restores_pool_filtration_preset_with_dynamic_filter_key() -> None:
+    client = make_client()
+    client.user_id = "12345"
+    client.websocket_connected = True
+    client.reported = {
+        "pool": {"et": "V_POS", "app": "POOL_M", "st": 1},
+        "fcr0": {"fr": "Waterfall", "et": "FRLY", "app": "WF", "st": 1},
+        "filt3": {
+            "et": "F_CTRL",
+            "app": "FILT",
+            "manSpd": 2850,
+            "minSpd": 600,
+            "maxSpd": 3450,
+            "spdList": [{"name": "Pool Filtration", "speed": 1100, "app": "BD1_F", "ar": 1}],
+        },
+        "ecm0": {"st": 1, "minSpd": 600, "maxSpd": 3450},
+    }
+
+    class FakeWebSocket:
+        closed = False
+
+        def __init__(self) -> None:
+            self.messages: list[dict[str, object]] = []
+
+        async def send_json(self, message: dict[str, object]) -> None:
+            self.messages.append(message)
+            desired = message["payload"]["state"]["desired"]
+            if "fcr0" in desired:
+                client.reported["fcr0"]["st"] = desired["fcr0"]["st"]
+            if "filt3" in desired:
+                client.reported["filt3"]["manSpd"] = desired["filt3"]["manSpd"]
+            client._resolve_pending_control()
+
+    websocket = FakeWebSocket()
+    client._ws = websocket  # type: ignore[assignment]
+
+    asyncio.run(client.async_set_waterfall(False))
+
+    desired_frames = [message["payload"]["state"]["desired"] for message in websocket.messages]
+    assert desired_frames == [
+        {"fcr0": {"st": 0}},
+        {"filt3": {"manSpd": 1100}},
+    ]
+    assert client.control_command_counts["waterfall state"] == 1
+    assert client.control_command_counts["waterfall speed restore"] == 1
+    assert client.control_success_count == 2
+    assert client.reported["fcr0"]["st"] == 0
+    assert client.reported["filt3"]["manSpd"] == 1100
+
+
+@pytest.mark.parametrize(
+    ("pool_running", "motor_running"),
+    [(False, True), (True, False)],
+)
+def test_waterfall_off_does_not_restore_speed_when_filtration_is_not_running(
+    pool_running: bool,
+    motor_running: bool,
+) -> None:
+    client = make_client()
+    client.user_id = "12345"
+    client.websocket_connected = True
+    client.reported = {
+        "pool": {"et": "V_POS", "app": "POOL_M", "st": int(pool_running)},
+        "fcr0": {"et": "FRLY", "app": "WF", "st": 1},
+        "filt0": {
+            "et": "F_CTRL",
+            "app": "FILT",
+            "manSpd": 2850,
+            "minSpd": 600,
+            "maxSpd": 3450,
+        },
+        "ecm0": {
+            "st": int(motor_running),
+            "minSpd": 600,
+            "maxSpd": 3450,
+            "spdList": [{"speed": 1100, "app": "BD1_F"}],
+        },
+    }
+
+    class FakeWebSocket:
+        closed = False
+
+        def __init__(self) -> None:
+            self.messages: list[dict[str, object]] = []
+
+        async def send_json(self, message: dict[str, object]) -> None:
+            self.messages.append(message)
+            desired = message["payload"]["state"]["desired"]
+            client.reported["fcr0"]["st"] = desired["fcr0"]["st"]
+            client._resolve_pending_control()
+
+    websocket = FakeWebSocket()
+    client._ws = websocket  # type: ignore[assignment]
+
+    asyncio.run(client.async_set_waterfall(False))
+
+    assert [message["payload"]["state"]["desired"] for message in websocket.messages] == [
+        {"fcr0": {"st": 0}}
+    ]
+    assert client.control_command_count == 1
+
+
+def test_waterfall_off_skips_restore_when_pool_preset_is_unavailable(caplog) -> None:
+    client = make_client()
+    client.user_id = "12345"
+    client.websocket_connected = True
+    client.reported = {
+        "pool": {"et": "V_POS", "app": "POOL_M", "st": 1},
+        "fcr0": {"et": "FRLY", "app": "WF", "st": 1},
+        "filt0": {
+            "et": "F_CTRL",
+            "app": "FILT",
+            "manSpd": 2850,
+            "minSpd": 600,
+            "maxSpd": 3450,
+        },
+        "ecm0": {"st": 1, "minSpd": 600, "maxSpd": 3450},
+    }
+
+    class FakeWebSocket:
+        closed = False
+
+        def __init__(self) -> None:
+            self.messages: list[dict[str, object]] = []
+
+        async def send_json(self, message: dict[str, object]) -> None:
+            self.messages.append(message)
+            client.reported["fcr0"]["st"] = 0
+            client._resolve_pending_control()
+
+    websocket = FakeWebSocket()
+    client._ws = websocket  # type: ignore[assignment]
+
+    asyncio.run(client.async_set_waterfall(False))
+
+    assert [message["payload"]["state"]["desired"] for message in websocket.messages] == [
+        {"fcr0": {"st": 0}}
+    ]
+    assert "did not report a BD1_F Pool Filtration preset" in caplog.text
+
+
+def test_waterfall_off_restore_failure_leaves_relay_off() -> None:
+    client = make_client()
+    client.user_id = "12345"
+    client.websocket_connected = True
+    client.reported = {
+        "pool": {"et": "V_POS", "app": "POOL_M", "st": 1},
+        "fcr0": {"et": "FRLY", "app": "WF", "st": 1},
+        "filt0": {
+            "et": "F_CTRL",
+            "app": "FILT",
+            "manSpd": 2850,
+            "minSpd": 600,
+            "maxSpd": 3450,
+        },
+        "ecm0": {
+            "st": 1,
+            "minSpd": 600,
+            "maxSpd": 3450,
+            "spdList": [{"speed": 1100, "app": "BD1_F"}],
+        },
+    }
+
+    class FakeWebSocket:
+        closed = False
+
+        def __init__(self) -> None:
+            self.messages: list[dict[str, object]] = []
+
+        async def send_json(self, message: dict[str, object]) -> None:
+            self.messages.append(message)
+            desired = message["payload"]["state"]["desired"]
+            if "fcr0" in desired:
+                client.reported["fcr0"]["st"] = 0
+                client._resolve_pending_control()
+                return
+            raise RuntimeError("simulated restore failure")
+
+    websocket = FakeWebSocket()
+    client._ws = websocket  # type: ignore[assignment]
+
+    with pytest.raises(api.TCXConnectionError, match="simulated restore failure"):
+        asyncio.run(client.async_set_waterfall(False))
+
+    assert client.reported["fcr0"]["st"] == 0
+    assert client.control_success_counts["waterfall state"] == 1
+    assert client.control_failure_counts["waterfall speed restore"] == 1
+
+
+def test_waterfall_off_is_idempotent_when_relay_is_already_off() -> None:
+    client = make_client()
+    client.reported = {
+        "fcr0": {"et": "FRLY", "app": "WF", "st": 0},
+        "pool": {"et": "V_POS", "app": "POOL_M", "st": 1},
+        "filt0": {
+            "et": "F_CTRL",
+            "app": "FILT",
+            "manSpd": 1100,
+            "minSpd": 600,
+            "maxSpd": 3450,
+        },
+        "ecm0": {
+            "st": 1,
+            "reqSpd": 1100,
+            "cmdSpd": 1100,
+            "prmSpd": 2500,
+            "spdList": [{"speed": 1100, "app": "BD1_F"}],
+        },
+    }
+
+    async def run_scenario() -> None:
+        client._schedule_post_prime_sync(1100)
+        pending = client._post_prime_sync_task
+        assert pending is not None
+        await client.async_set_waterfall(False)
+        assert client._post_prime_sync_task is pending
+        assert pending.done() is False
+        await client._async_cancel_post_prime_sync("test_complete")
+
+    asyncio.run(run_scenario())
+
+    assert client.control_command_count == 0
+
+
 def test_pump_power_control_uses_extended_confirmation_timeout(monkeypatch) -> None:
     client = make_client()
     client.user_id = "12345"

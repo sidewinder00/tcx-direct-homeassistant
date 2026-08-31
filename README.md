@@ -9,7 +9,7 @@ TCX Direct connects Home Assistant directly to the iAquaLink/Zodiac cloud. It do
 
 ## Current version
 
-**v0.2.10**
+**v0.2.11**
 
 The integration prioritizes reliable telemetry and conservative equipment control. Native control is enabled only for TCX equipment whose state and write behavior have been captured and validated; other equipment remains read-only.
 
@@ -56,7 +56,7 @@ The Pool Light Power switch and color selector become available only when the co
 
 Pool-light colors and programs use the confirmed sequence: Alpine White, Sky Blue, Cobalt Blue, Caribbean Blue, Spring Green, Emerald Green, Emerald Rose, Magenta, Violet, Slow Color Splash, Fast Color Splash, America The Beautiful, Fat Tuesday, and Disco Tech. The selected program comes from `cmdClr`; `st = 0` remains authoritative for Off even when TCX retains the last nonzero color code.
 
-Pump RPM reports the active motor `cmdSpd`, including priming and other controller-selected runtime changes. Pump Manual Speed separately displays and writes the filtration controller's `manSpd`, so live RPM changes do not overwrite the writable setpoint. Pool Filtration Preset displays and writes only the `BD1_F` entry in `ecm0.spdList`; the complete list is sent as required by TCX while the Spa Filtration and Waterfall entries are preserved unchanged. Waterfall RPM defaults to 2850 RPM; turning Waterfall on confirms the feature relay and then applies this value to `filt0.manSpd`. Changing Waterfall RPM while the feature is active applies the new value immediately.
+Pump RPM reports the active motor `cmdSpd`, including priming and other controller-selected runtime changes. Pump Manual Speed separately displays and writes the filtration controller's `manSpd`, so live RPM changes do not overwrite the writable setpoint. Pool Filtration Preset displays and writes only the `BD1_F` entry in `ecm0.spdList`; the complete list is sent as required by TCX while the Spa Filtration and Waterfall entries are preserved unchanged. Waterfall RPM defaults to 2850 RPM; turning Waterfall on confirms the feature relay and then applies this value to the dynamically discovered filtration controller's `manSpd`. Turning Waterfall off confirms the relay first, then restores `manSpd` from the current persistent `BD1_F` Pool Filtration preset when Pool Filtration and the motor remain running. Changing Waterfall RPM while the feature is active applies the new value immediately.
 
 Pump Requested RPM reports `ecm0.reqSpd` independently from the active command. Pump Operating Phase compares requested, commanded, and configured priming RPM and also considers the confirmed Waterfall relay, allowing priming and other speed transitions to be shown without changing the writable speed control.
 

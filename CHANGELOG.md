@@ -2,6 +2,16 @@
 
 All notable changes to Jandy TCX Direct are documented here.
 
+## [0.2.11] - 2026-08-30
+
+### Fixed
+- Restore the persistent `BD1_F` Pool Filtration RPM after Waterfall is turned off instead of leaving the pump at the Waterfall manual speed.
+- Keep Waterfall-off control confirmation-gated and sequential: confirm the dynamically discovered `FRLY`/`WF` relay is off, then send a separate `manSpd` restoration through the dynamically discovered filtration-controller key.
+- Skip the speed write safely when the relay was already off, Pool Filtration or the motor is stopped, or no confirmed `BD1_F` preset is available. A restoration failure leaves the Waterfall relay off and is reported as a distinct control failure.
+
+### Added
+- Add regressions for successful restoration, filter-key discovery, filter-controller preset fallback, stopped filtration, missing presets, restore failures, and idempotent Waterfall-off commands.
+
 ## [0.2.10] - 2026-08-30
 
 ### Added
