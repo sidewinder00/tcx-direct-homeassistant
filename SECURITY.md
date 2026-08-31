@@ -25,6 +25,6 @@ If an iAquaLink password or token is exposed, change the account password and re
 or refresh active sessions immediately. Removing a secret in a later commit does not
 remove it from Git history; exposed credentials must be treated as compromised.
 
-Do not report a sensitive vulnerability through a public issue. This repository does
-not currently advertise a confidential reporting channel or guarantee security
-response times.
+Do not report a sensitive vulnerability through a public issue. Use GitHub's private
+vulnerability reporting form from the repository's **Security** tab instead. This is
+still a personal project and does not guarantee security response times.
