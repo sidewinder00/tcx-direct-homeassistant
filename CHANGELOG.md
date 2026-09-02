@@ -2,6 +2,24 @@
 
 All notable changes to Jandy TCX Direct are documented here.
 
+## [0.3.3] - 2026-09-02
+
+- Add a passive, download-only `native_schedule_trace` for separate `main` and
+  `sched` schedule desired/reported fragments, their metadata, unnamespaced stream
+  deltas, existing REST responses, and local subscription/schedule send attempts.
+- Distinguish missing fields, explicit nulls, empty objects and truncated captures.
+  Redact credentials, identifiers and schedule labels before retention; bound
+  traffic and table-change history to 20 entries each and individual fragments to
+  2 KiB. Retain the last Authorization/REST observation and schedule-send summary.
+- Record late merged-table changes alongside the last confirmed operation without
+  interpreting them as intent or changing command, confirmation or journal behavior.
+  The trace is memory-only, does not poll, and is not added to sensors or recorder.
+- Document the supervised duplicate-create finding and later manual-speed timeout
+  coinciding with another duplicate. Keep native write testing paused. This patch
+  gathers evidence; it does not fix or establish the cause of either failure.
+- Advance Integration Version to 0.3.3 and its generated numeric code to 3003.
+- Validate with 279 passing tests, including Home Assistant 2026.8.3 adapters.
+
 ## [0.3.2] - 2026-09-02
 
 - Correct the REST-only native schedule snapshot assumption exposed by the first

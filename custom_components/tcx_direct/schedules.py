@@ -259,6 +259,14 @@ class TCXSchedules:
                 and not request[1].done()
             ):
                 request[1].set_result(deepcopy(table))
+        self.client.schedule_trace.reported_table(
+            self.client.reported.get("sh"),
+            source=source,
+            full=full,
+            connection=self.client.websocket_connect_count
+            if source.startswith("websocket")
+            else None,
+        )
 
     def snapshot(self) -> dict[str, Any]:
         table = self.client.reported.get("sh")
@@ -291,6 +299,7 @@ class TCXSchedules:
         self._history.append(
             {"at": _now(), "state": state, "plan_id": plan_id, "operation": operation}
         )
+        self.client.schedule_trace.operation(state, plan_id, operation)
 
     async def _fresh_rest(self) -> dict[str, Any]:
         """Explicit REST reads still require a table in this particular response."""

@@ -28,6 +28,57 @@ from custom_components.tcx_direct.schedule_services import (  # noqa: E402
 from custom_components.tcx_direct.schedules import SCHEDULE_SNAPSHOT_SOURCE  # noqa: E402
 
 
+def test_schedule_trace_is_download_only_and_export_does_not_send_or_mutate():
+    import custom_components.tcx_direct as integration
+
+    importlib.reload(integration)
+    from custom_components.tcx_direct.diagnostics import async_get_config_entry_diagnostics
+    from custom_components.tcx_direct.sensor import SENSORS
+
+    async def run():
+        rig = Rig({})
+        rig.manager.writes_enabled = False
+        rig.client.schedule_trace.received(
+            {
+                "service": "Authorization",
+                "payload": {
+                    "main": {"state": {"desired": {"sh": {"add": None}}}},
+                    "sched": {"state": {"reported": {"sh": {}}}},
+                },
+            },
+            source="websocket",
+            connection=1,
+        )
+        coordinator = SimpleNamespace(
+            source="websocket",
+            using_cached_data=False,
+            last_successful_update=None,
+            normalized={},
+            raw_reported=rig.client.reported,
+            pump_zero_suppression_pending=False,
+            pump_zero_suppression_count=0,
+            last_pump_zero_suppressed_at=None,
+        )
+        config = SimpleNamespace(
+            runtime_data=SimpleNamespace(client=rig.client, coordinator=coordinator),
+            data={"username": "private-test-user"},
+            options={"experimental_schedule_writes": False},
+        )
+        before = rig.client.schedule_trace.snapshot()
+        result = await async_get_config_entry_diagnostics(None, config)
+        assert result["native_schedule_trace"] == before
+        assert result["config"]["username"] == "**REDACTED**"
+        assert "native_schedule_trace" not in result["native_schedules"]
+        assert all("native_schedule_trace" not in spec.attribute_keys for spec in SENSORS)
+        result["native_schedule_trace"]["events"].clear()
+        assert rig.client.schedule_trace.snapshot() == before
+        assert not rig.messages and not rig.subscriptions
+        assert rig.client.shadow_request_count == 0
+        assert rig.manager.pending is None and not rig.manager.writes_enabled
+
+    asyncio.run(run())
+
+
 def test_default_ha_read_of_empty_schedule_table_with_writes_disabled(tmp_path):
     async def run():
         hass = HomeAssistant(str(tmp_path))

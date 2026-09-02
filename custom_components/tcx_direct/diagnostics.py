@@ -56,6 +56,7 @@ async def async_get_config_entry_diagnostics(
         },
         "config": dict(entry.data),
         "options": dict(entry.options),
+        "native_schedule_trace": client.schedule_trace.snapshot(),
         "connection": {
             "healthy": client.healthy,
             "websocket_connected": client.websocket_connected,

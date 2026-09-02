@@ -55,6 +55,7 @@ from .protocol_helpers import (
     _pump_speed_limits,
 )
 from .redaction import safe_structure_key, sanitize_diagnostics
+from .schedule_trace import NativeScheduleTrace
 from .schedules import TCXSchedules
 
 _LOGGER = logging.getLogger(__name__)
@@ -790,6 +791,7 @@ class TCXClient:
         self._recent_ws_structures: deque[dict[str, Any]] = deque(maxlen=RECENT_WS_STRUCTURES)
         self._ws_structure_counts: dict[str, int] = {}
         self._recent_desired_payloads: deque[dict[str, Any]] = deque(maxlen=20)
+        self.schedule_trace = NativeScheduleTrace()
         self._recent_controller_mode_transitions: deque[dict[str, Any]] = deque(
             maxlen=RECENT_CONTROLLER_MODE_TRANSITIONS
         )
@@ -1049,6 +1051,7 @@ class TCXClient:
             except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as err:
                 raise TCXConnectionError(f"Unable to read TCX shadow: {err}") from err
 
+            self.schedule_trace.received(data, source="rest")
             reported = _collect_reported(data)
             if reported is None:
                 unsupported.append(f"{version} response had no state.reported")
@@ -1192,6 +1195,11 @@ class TCXClient:
         started = time.monotonic()
 
         try:
+            self.schedule_trace.sending(
+                message,
+                connection=self.websocket_connect_count,
+                command_number=self.control_command_count,
+            )
             await ws.send_json(message)
             await asyncio.wait_for(future, timeout=confirmation_timeout)
         except asyncio.TimeoutError as err:
@@ -2052,6 +2060,10 @@ class TCXClient:
             "service": "Authorization",
             "target": self.device_id,
         }
+        self.schedule_trace.sending(
+            subscribe,
+            connection=self.websocket_connect_count + int(ws is not self._ws),
+        )
         await ws.send_json(subscribe)
         self.authorization_subscribe_count += 1
 
@@ -2136,6 +2148,9 @@ class TCXClient:
                             )
                             self._record_ws_structure(data)
 
+                        self.schedule_trace.received(
+                            data, source="websocket", connection=self.websocket_connect_count
+                        )
                         reported = _collect_reported(data)
                         payload = data.get("payload") if isinstance(data, dict) else None
                         payload_state = (
