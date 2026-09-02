@@ -24,7 +24,7 @@ def test_entity_categories_use_home_assistant_enum() -> None:
                 continue
             categories.append((path, node.lineno, ast.unparse(node.value)))
 
-    assert len(categories) == 22
+    assert len(categories) == 23
     assert all(
         expression == "EntityCategory.DIAGNOSTIC" for _path, _line, expression in categories
     ), categories

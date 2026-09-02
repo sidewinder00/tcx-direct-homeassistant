@@ -173,6 +173,7 @@ async def async_get_config_entry_diagnostics(
             "suppression_count": coordinator.pump_zero_suppression_count,
             "last_suppressed_at": coordinator.last_pump_zero_suppressed_at,
         },
+        "native_schedules": client.schedules.snapshot(),
         "normalized": coordinator.normalized,
         "reported_state": sanitize_diagnostics(coordinator.raw_reported),
     }

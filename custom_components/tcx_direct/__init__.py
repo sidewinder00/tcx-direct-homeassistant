@@ -8,10 +8,11 @@ from homeassistant.components.switch import DOMAIN as SWITCH_DOMAIN
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
+from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady, HomeAssistantError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import service
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.storage import Store
 from homeassistant.helpers.typing import ConfigType
 
 from .api import (
@@ -23,11 +24,14 @@ from .api import (
 from .const import (
     ATTR_RPM,
     CONF_DEVICE_ID,
+    CONF_EXPERIMENTAL_SCHEDULE_WRITES,
     DOMAIN,
     PLATFORMS,
     SERVICE_START_PUMP_AT_SPEED,
 )
 from .coordinator import TCXCoordinator
+from .schedule_services import async_register_schedule_services
+from .schedules import ScheduleError
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -43,6 +47,7 @@ TCXConfigEntry = ConfigEntry[TCXRuntimeData]
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Register TCX Direct service actions independently of config entries."""
+    async_register_schedule_services(hass)
     service.async_register_platform_entity_service(
         hass,
         DOMAIN,
@@ -63,6 +68,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: TCXConfigEntry) -> bool:
         entry.data[CONF_DEVICE_ID],
     )
     coordinator = TCXCoordinator(hass, client, entry.entry_id)
+    schedule_store = Store(hass, 1, f"{DOMAIN}.schedules.{entry.entry_id}")
+    try:
+        client.schedules.configure_storage(
+            await schedule_store.async_load(), schedule_store.async_save
+        )
+    except (OSError, HomeAssistantError, ScheduleError) as err:
+        # A broken experimental journal must not stop existing pump telemetry or
+        # controls, and must never be silently discarded to permit another add.
+        client.schedules.storage_error = "Schedule journal unavailable; schedule writes blocked"
+        _LOGGER.error("Native schedule journal could not be loaded: %s", err)
+    client.schedules.writes_enabled = entry.options.get(CONF_EXPERIMENTAL_SCHEDULE_WRITES, False)
     had_cache = await coordinator.async_load_cache()
 
     # Authentication/device discovery already succeeded during config flow, but
@@ -98,9 +114,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: TCXConfigEntry) -> bool:
             _LOGGER.warning("TCX shadow read failed; continuing with WebSocket transport: %s", err)
 
     entry.runtime_data = TCXRuntimeData(client=client, coordinator=coordinator)
+    entry.async_on_unload(entry.add_update_listener(async_update_options))
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     await client.async_start()
     return True
+
+
+async def async_update_options(hass: HomeAssistant, entry: TCXConfigEntry) -> None:
+    """Apply the write opt-in without reconnecting or touching pump state."""
+    entry.runtime_data.client.schedules.writes_enabled = entry.options.get(
+        CONF_EXPERIMENTAL_SCHEDULE_WRITES, False
+    )
+    await entry.runtime_data.coordinator.async_handle_status()
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: TCXConfigEntry) -> bool:

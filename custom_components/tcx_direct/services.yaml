@@ -14,3 +14,85 @@ start_pump_at_speed:
           step: 25
           unit_of_measurement: rpm
           mode: box
+
+get_native_schedules:
+  fields:
+    config_entry_id:
+      required: true
+      selector:
+        config_entry:
+          integration: tcx_direct
+
+preview_native_schedule:
+  fields:
+    config_entry_id:
+      required: true
+      selector:
+        config_entry:
+          integration: tcx_direct
+    operation:
+      required: true
+      selector:
+        select:
+          options:
+            - create
+            - update
+            - enable
+            - disable
+            - delete
+    schedule_id:
+      example: "1"
+      selector:
+        text:
+    start:
+      example: "11:00"
+      selector:
+        text:
+    end:
+      example: "11:15"
+      selector:
+        text:
+    weekday_codes:
+      example: [5]
+      selector:
+        object:
+    rpm:
+      example: 2650
+      selector:
+        number:
+          min: 1
+          max: 99999
+          step: 1
+          mode: box
+          unit_of_measurement: rpm
+    enabled:
+      selector:
+        boolean:
+
+apply_native_schedule:
+  fields:
+    config_entry_id:
+      required: true
+      selector:
+        config_entry:
+          integration: tcx_direct
+    plan_id:
+      required: true
+      selector:
+        text:
+
+acknowledge_native_schedule_write:
+  fields:
+    config_entry_id:
+      required: true
+      selector:
+        config_entry:
+          integration: tcx_direct
+    plan_id:
+      required: true
+      selector:
+        text:
+    revision:
+      required: true
+      selector:
+        text:

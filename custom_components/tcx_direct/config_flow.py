@@ -4,8 +4,9 @@ import logging
 from typing import Any
 
 import voluptuous as vol
-from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
+from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResult, OptionsFlow
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
+from homeassistant.core import callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.selector import (
     SelectSelector,
@@ -17,13 +18,24 @@ from homeassistant.helpers.selector import (
 )
 
 from .api import TCXAuthError, TCXClient, TCXConnectionError, TCXDevice
-from .const import CONF_DEVICE_ID, CONF_DEVICE_NAME, CONF_DEVICE_TYPE, DOMAIN
+from .const import (
+    CONF_DEVICE_ID,
+    CONF_DEVICE_NAME,
+    CONF_DEVICE_TYPE,
+    CONF_EXPERIMENTAL_SCHEDULE_WRITES,
+    DOMAIN,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
 
 class TCXDirectConfigFlow(ConfigFlow, domain=DOMAIN):
     VERSION = 1
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry: ConfigEntry) -> TCXOptionsFlow:
+        return TCXOptionsFlow()
 
     def __init__(self) -> None:
         self._username: str | None = None
@@ -152,3 +164,23 @@ class TCXDirectConfigFlow(ConfigFlow, domain=DOMAIN):
             }
         )
         return self.async_show_form(step_id="reauth_confirm", data_schema=schema, errors=errors)
+
+
+class TCXOptionsFlow(OptionsFlow):
+    async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        if user_input is not None:
+            # Retain unrelated options, including the user's Waterfall RPM.
+            return self.async_create_entry(data={**self.config_entry.options, **user_input})
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        CONF_EXPERIMENTAL_SCHEDULE_WRITES,
+                        default=self.config_entry.options.get(
+                            CONF_EXPERIMENTAL_SCHEDULE_WRITES, False
+                        ),
+                    ): bool
+                }
+            ),
+        )

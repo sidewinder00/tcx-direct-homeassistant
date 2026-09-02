@@ -26,6 +26,14 @@ class TCXSensorDescription(SensorEntityDescription):
 
 SENSORS = (
     TCXSensorDescription(
+        key="native_schedules",
+        data_key="native_schedules",
+        name="Native Schedules",
+        icon="mdi:calendar-clock",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        attribute_keys=("native_schedule_count", "native_schedule_data", "using_cached_data"),
+    ),
+    TCXSensorDescription(
         key="pool_temperature",
         data_key="pool_temperature",
         name="Pool Temperature",

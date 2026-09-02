@@ -18,7 +18,7 @@ def encode_version_code(version: str) -> int:
     return major * 1_000_000 + minor * 1_000 + patch
 
 
-VERSION = "0.2.11"
+VERSION = "0.3.0"
 VERSION_CODE = encode_version_code(VERSION)
 
 ATTR_RPM = "rpm"
@@ -34,6 +34,7 @@ CONF_DEVICE_ID = "device_id"
 CONF_DEVICE_NAME = "device_name"
 CONF_DEVICE_TYPE = "device_type"
 CONF_WATERFALL_RPM = "waterfall_rpm"
+CONF_EXPERIMENTAL_SCHEDULE_WRITES = "experimental_schedule_writes"
 
 DEFAULT_WATERFALL_RPM = 2850
 

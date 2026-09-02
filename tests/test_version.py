@@ -8,8 +8,8 @@ from custom_components.tcx_direct.const import VERSION, VERSION_CODE, encode_ver
 
 
 def test_current_version_has_expected_sortable_code() -> None:
-    assert VERSION == "0.2.11"
-    assert VERSION_CODE == 2011
+    assert VERSION == "0.3.0"
+    assert VERSION_CODE == 3000
 
 
 @pytest.mark.parametrize(
