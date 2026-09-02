@@ -2,7 +2,28 @@
 
 All notable changes to Jandy TCX Direct are documented here.
 
-## [Unreleased]
+## [0.3.4] - 2026-09-02
+
+### REST reliability
+
+- Share a monotonic REST cooldown across setup, background polling, explicit reads
+  and control-timeout refreshes. Serialize reads and recheck the deadline after
+  acquiring the request lock; deferred reads do not authenticate or send HTTP.
+- Honor Retry-After seconds and HTTP dates without shortening the server minimum
+  to the local backoff cap. Halve local backoff only after two consecutive successful
+  reads. Long cooldowns use cancellable, bounded background waits.
+- Keep locally deferred reads within the connection-error hierarchy so setup can
+  continue using WebSocket transport. Preserve equipment command payloads and
+  confirmation timeouts; do not resend timed-out commands.
+- Count vendor 429s for every REST caller, and expose separate HTTP-attempt and
+  deferred-call counters plus remaining cooldown in diagnostic downloads.
+- Native schedule write/confirmation behavior is unchanged and testing stays paused.
+  This patch does not resolve or establish the cause of duplicate schedules.
+- Advance Integration Version to 0.3.4 and its generated numeric code to 3004.
+- Document the retained control-lock contention tradeoff and exceptional recovery
+  for indefinite cooldowns; test contended timeout refreshes, cancellation and 429s.
+- Validate offline with 327 passing tests, including 48 new pacing, setup,
+  control-timeout, cancellation and diagnostic-export regressions.
 
 ### Documentation
 
@@ -11,7 +32,8 @@ All notable changes to Jandy TCX Direct are documented here.
   and troubleshooting; preserve the detailed research separately for development.
 - Remove command recipes and field-level reference material from the current guides.
   This does not erase details from source, tests, history or earlier releases.
-- No runtime, control, licensing, HACS, version or repository-visibility changes.
+- The earlier documentation cleanup made no runtime, control, licensing, HACS,
+  version or repository-visibility changes.
 
 ## [0.3.3] - 2026-09-02
 

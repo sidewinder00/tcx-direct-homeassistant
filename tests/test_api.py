@@ -1746,8 +1746,9 @@ def test_shadow_rate_limit_backs_off_without_marking_live_socket_offline(
         if delay != 2:
             client._stopping = True
 
-    monkeypatch.setattr(client, "async_get_shadow", get_shadow)
+    monkeypatch.setattr(client, "_async_get_shadow", get_shadow)
     monkeypatch.setattr(api.asyncio, "sleep", sleep)
+    monkeypatch.setattr(api.time, "monotonic", lambda: 100)
 
     asyncio.run(client._shadow_loop())
 

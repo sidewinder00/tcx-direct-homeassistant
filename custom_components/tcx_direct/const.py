@@ -18,7 +18,7 @@ def encode_version_code(version: str) -> int:
     return major * 1_000_000 + minor * 1_000 + patch
 
 
-VERSION = "0.3.3"
+VERSION = "0.3.4"
 VERSION_CODE = encode_version_code(VERSION)
 
 ATTR_RPM = "rpm"
@@ -68,7 +68,9 @@ LIGHT_COLOR_BY_CODE = {
 LIGHT_COLOR_BY_NAME = {name: code for code, name in LIGHT_COLOR_BY_CODE.items()}
 
 SHADOW_INTERVAL = 120
+# Local policy only: a server Retry-After may require a longer cooldown.
 SHADOW_RATE_LIMIT_MAX_INTERVAL = 1800
+SHADOW_RATE_LIMIT_RECOVERY_SUCCESSES = 2
 TOKEN_REFRESH_MARGIN = 300
 RECONNECT_MAX = 60
 MAX_WEBSOCKET_SESSION = 21600
