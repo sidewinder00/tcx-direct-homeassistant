@@ -2,6 +2,17 @@
 
 All notable changes to Jandy TCX Direct are documented here.
 
+## [Unreleased]
+
+### Documentation
+
+- Replace the public protocol reference with an architecture and limitations overview.
+- Refocus the README and native schedule guide on behavior, safety, known defects
+  and troubleshooting; preserve the detailed research separately for development.
+- Remove command recipes and field-level reference material from the current guides.
+  This does not erase details from source, tests, history or earlier releases.
+- No runtime, control, licensing, HACS, version or repository-visibility changes.
+
 ## [0.3.3] - 2026-09-02
 
 - Add a passive, download-only `native_schedule_trace` for separate `main` and
