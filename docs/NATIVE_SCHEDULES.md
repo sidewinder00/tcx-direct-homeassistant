@@ -1,9 +1,17 @@
-# Experimental native schedules — v0.3.2
+# Experimental native schedules — v0.3.3
+
+> **Write testing paused:** the first supervised add was initially confirmed, then
+> duplicate disabled entries were reported. A later manual-speed request timed out
+> while another duplicate appeared. Keep experimental writes off; do not repeat
+> create/manual-speed tests or use the workflow below until this is resolved.
+> The v0.3.3 passive trace does not fix either issue or change the write protocol.
 
 This is a development feature, not a migration or a replacement for the existing
 HA pump controller. Publishing this release does not install it in Home Assistant
-or validate it on live equipment. Existing pump, Waterfall, SWG and dashboard
-behavior is unchanged. Native schedule writes remain disabled by default.
+or validate it on live equipment. This patch leaves existing equipment command code,
+HA automations and dashboards unchanged; that does not guarantee isolation from
+remote schedule-state problems. Native schedule writes remain disabled by default.
+Disabling them prevents new integration schedule writes, not remote-state cleanup.
 
 ## What this build does
 
@@ -22,8 +30,8 @@ behavior is unchanged. Native schedule writes remain disabled by default.
   not a new local/offline connection to the controller.
 
 Native schedule execution and offline persistence still need hardware validation.
-The captured app commands establish protocol shapes, not proof that this build
-has successfully written to a real controller.
+Captured app commands establish protocol shapes. The supervised integration create
+matched its initial readback but failed subsequent exactly-once validation.
 
 ## Why the snapshot source changed
 
@@ -105,6 +113,9 @@ they can delay a concurrent equipment command. The passive Native Schedules sens
 uses existing received telemetry and does not issue extra requests.
 
 ## First supervised development workflow
+
+**Paused pending investigation.** These examples document the intended workflow;
+they are not instructions to resume live testing now.
 
 Create, edit and delete through **Home Assistant**; use iAquaLink only to inspect
 the results. Leave existing HA schedules and automations unchanged. Start with
@@ -245,6 +256,22 @@ context and last acknowledgement are not.
 
 ## Validation status and next gates
 
+The supervised v0.3.2 test verified the empty-table Authorization read and the
+first disabled entry's initial readback/app display. It did **not** pass the full
+creation test: two more identical numbered entries arrived later, before the next
+preview. One local add attempt, three numbered reported entries, three null-add
+cleanup echoes and no reconnects were recorded. The cause remains unconfirmed;
+cleanup metadata alone does not establish an active desired command or its sender.
+
+A later manual request sent only `filt0.manSpd: 2000` in the existing `tcx`
+namespace, with no `sh` field. Its desired echo arrived, but the reported manual
+and motor speeds remained 1100 and confirmation timed out. A fourth identical
+disabled schedule appeared during that command's confirmation window, without an
+additional subscription or local schedule send. Auto mode was active; no priming
+or post-prime task explained the failure. This suggests a shared remote-state
+problem, but does not establish the mechanism, sender of cleanup, or required fix.
+Turning writes off, reloading HA or downgrading must not be assumed to clear it.
+
 Implemented offline tests cover captured CRUD shapes, option gates, explicit RPM,
 raw weekday validation, disabled midnight entries, adjacent/overlapping blocks,
 freshness/provenance, normalized reported values and unique equipment matching,
@@ -260,6 +287,7 @@ Synthetic fixtures contain no private diagnostic dumps or controller identifiers
 
 Still required with the owner supervising:
 
+- Resolve duplicate-add behavior and the manual-speed failure before resuming tests.
 - Create two disabled entries from HA; edit one and verify the other is untouched.
 - Confirm a newly requested Authorization snapshot works repeatedly with no schedules
   and with stored entries; the observed startup snapshot alone does not prove this.
@@ -275,6 +303,51 @@ Still required with the owner supervising:
   restart persistence under an agreed supervised plan. Do not power-cycle now.
 - Design UV changes so yesterday's persistent choice is not silently reused when
   HA is offline. Keep CircuPool safety monitoring/control separate.
+
+## Passive schedule trace
+
+Version 0.3.3 adds a top-level `native_schedule_trace` to diagnostic downloads.
+It collects existing traffic even when experimental writes are off. It adds no
+service, poll, timer, subscription, equipment command, cleanup command or retry.
+Downloading the trace is passive. It does not clear a pending write, change the
+write option, or classify later changes as controller intent.
+
+- `events`: last 20 relevant observations with local sequence, UTC receipt time,
+  transport and local connection number. This includes subscription send attempts,
+  schedule send attempts, received snapshots/deltas and operation milestones.
+- Received `documents` retain `root`, `payload`, and each container's `main` and
+  `sched` **separately, before the normal reported-state merger**. Direct stream
+  deltas without a namespace remain unassigned; the trace never guesses their
+  owning namespace. Other document layouts are not recursively inferred.
+- Each document exposes `desired_sh`, `reported_sh`, and their separate metadata,
+  plus shadow timestamp/version. `presence` distinguishes missing, null, object,
+  list and scalar values. An empty object is explicit. Metadata-only evidence does
+  not mean an active desired add exists. Client-token presence is recorded, not
+  the token, credentials, account/device identity or unrelated equipment payloads.
+- `reported_changes`: last 20 changes in the redacted merged table, including
+  added/removed/changed keys and the last locally confirmed operation for temporal
+  context. The first usable table is a baseline. Null tombstones differ from
+  removed keys. An incomplete capture resets the diff baseline. A later change
+  is **not** proof that the preceding operation caused it, nor a new safety latch.
+- The last Authorization snapshot, REST response, schedule-send attempt and
+  confirmed operation are retained separately when routine observations roll out
+  of the event ring. Ordinary non-schedule WebSocket telemetry is skipped.
+
+Fragments are capped at 2 KiB, 256 visited nodes, eight nesting levels, 32 items per
+container and 160 characters per string. Oversized/unsupported values are explicitly
+marked `truncated`; never interpret an omitted fragment as a complete empty table.
+Sensitive keys and schedule labels are redacted **before storage**. Changes only
+in redacted fields are not visible to the table diff. Other arbitrary free-text
+fields may still require manual review before sharing a diagnostic publicly.
+All histories are memory-only and reset on reload/restart. They are absent from
+sensor attributes, coordinator cache and the write journal; no recorder history
+is added. A capture error increments `capture_errors` without logging raw input or
+interrupting normal control/telemetry. A send attempt proves neither delivery nor
+exactly-once controller execution. Snapshots retain the existing freshness limits.
+
+After a separately approved installation, keep native writes off and preserve
+existing entries. Capture diagnostics from naturally received traffic first;
+do not recreate the failure or trigger extra snapshot actions solely for this trace.
 
 Leave the existing HA timetable, pump controller and SWG safety controls unchanged
 for non-running/disabled tests. A live execution test needs its own agreed plan to

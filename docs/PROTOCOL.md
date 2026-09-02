@@ -4,7 +4,22 @@ This document records TCX cloud behavior that has been observed while developing
 
 The iAquaLink/TCX cloud protocol is unofficial and may change without notice.
 
-## Native schedule protocol (experimental v0.3.2)
+## Native schedule protocol (experimental v0.3.3)
+
+**Native write testing is paused.** A supervised v0.3.2 create had one recorded
+outbound add, a matching initial readback, then separate reported entries at two
+additional numbered keys. Three `desired.sh.add: null` echoes were received; no
+reconnect or local resend was recorded. The later entries preceded the next preview.
+This is not a successful exactly-once creation test. The sender/namespace cleanup
+mechanism and reason for repeated processing remain unconfirmed. Do not infer from
+metadata paths that a non-null desired add persists, or send guessed cleanup writes.
+
+A later manual-speed command contained only `filt0.manSpd: 2000`, no schedule
+fields. Its desired echo was received, but reported speed stayed at 1100 and the
+command timed out. A fourth identical disabled schedule was reported within that
+confirmation window, with no additional subscription or local schedule send.
+This strengthens suspicion of a shared remote-state problem without proving its
+cause. Disabling native writes does not itself clear any retained remote state.
 
 An official-app capture sequence established the following desired payloads and
 matching reported states for one Pool Filtration entry:
@@ -17,7 +32,8 @@ matching reported states for one Pool Filtration entry:
 | Delete | `{"1": "[DELETED]"}` | Numbered entry becomes `null` |
 
 Subsequent `desired.sh.add: null` and `desired.sh.1: null` are observed cleanup
-echoes, not additional commands the integration should send. Numbered keys are
+echoes; the captures alone do not establish their sender or whether client-side
+cleanup is required. The integration does not send speculative null writes. Numbered keys are
 controller-assigned; `id` inside an entry is a display label, not the slot ID.
 
 Entry fields observed: `lc: "pool"`, `id: "Filter Pump"`, `on: "T=11:00"`,
@@ -56,8 +72,13 @@ request/response correlation token: an Authorization response already in flight
 when a request is registered cannot be distinguished from its direct reply. The
 acknowledgement source and revision are persisted, and new pending operations
 record their snapshot source. Exact schedule equality remains intentional:
-controller-added or normalized fields cause uncertainty, not automatic acceptance
-or retransmission. Live schedule writes and execution still need supervised tests.
+controller-added or normalized fields present during readback cause uncertainty,
+not automatic acceptance or retransmission. The current confirmation covers that
+readback, not changes arriving later; the duplicate test exposed this limitation.
+The v0.3.3 download-only trace retains bounded, redacted namespace fragments
+and late table changes without altering this state machine. See the
+[trace schema and limitations](NATIVE_SCHEDULES.md#passive-schedule-trace).
+Live schedule writes and execution remain unvalidated.
 
 See [native schedule development guide](NATIVE_SCHEDULES.md) for safeguards,
 known limitations, actions, recovery, and the remaining hardware test gates.
