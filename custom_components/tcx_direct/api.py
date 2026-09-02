@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import math
 import random
 import secrets
 import string
@@ -38,6 +39,7 @@ from .const import (
     RECONNECT_MAX,
     SHADOW_INTERVAL,
     SHADOW_RATE_LIMIT_MAX_INTERVAL,
+    SHADOW_RATE_LIMIT_RECOVERY_SUCCESSES,
     TOKEN_REFRESH_MARGIN,
     WATCHDOG_RESUBSCRIBE_TIMEOUT,
     WEBSOCKET_STALE_SECONDS,
@@ -55,6 +57,7 @@ from .protocol_helpers import (
     _pump_speed_limits,
 )
 from .redaction import safe_structure_key, sanitize_diagnostics
+from .rest_pacing import retry_after_seconds
 from .schedule_trace import NativeScheduleTrace
 from .schedules import TCXSchedules
 
@@ -79,6 +82,19 @@ class TCXRateLimited(TCXConnectionError):
     def __init__(self, message: str, retry_after: float | None = None) -> None:
         super().__init__(message)
         self.retry_after = retry_after
+
+
+class TCXShadowDeferred(TCXConnectionError):
+    """A local cooldown prevented a REST read; no HTTP request was attempted."""
+
+    def __init__(self, retry_after: float) -> None:
+        self.retry_after = retry_after
+        detail = (
+            f"retry in {math.ceil(retry_after)} seconds"
+            if math.isfinite(retry_after)
+            else "server retry delay exceeds the supported range; REST paused for this session"
+        )
+        super().__init__(f"TCX REST shadow cooldown active; {detail}")
 
 
 class TCXDeviceNotFound(TCXError):
@@ -767,10 +783,14 @@ class TCXClient:
         self.full_login_count = 0
         self.auth_refresh_count = 0
         self.shadow_request_count = 0
+        self.shadow_http_attempt_count = 0
+        self.shadow_deferred_count = 0
         self.shadow_success_count = 0
         self.shadow_failure_count = 0
         self.shadow_rate_limit_count = 0
         self.shadow_poll_interval = SHADOW_INTERVAL
+        self._shadow_cooldown_until = 0.0
+        self._shadow_recovery_successes = 0
         self.last_shadow_error: str | None = None
         self.last_shadow_rate_limited_at: str | None = None
         self.watchdog_resubscribe_count = 0
@@ -807,6 +827,7 @@ class TCXClient:
         self._reconnect_requested = asyncio.Event()
         self._authorization_snapshot_event = asyncio.Event()
         self._auth_lock = asyncio.Lock()
+        self._shadow_lock = asyncio.Lock()
         self._control_lock = asyncio.Lock()
         self._pending_control: _PendingControl | None = None
         self._post_prime_sync_task: asyncio.Task[None] | None = None
@@ -985,14 +1006,51 @@ class TCXClient:
                 )
         return devices
 
+    @property
+    def shadow_cooldown_remaining(self) -> float:
+        """Seconds until REST is eligible; wall-clock adjustments cannot shorten it."""
+        return max(0.0, self._shadow_cooldown_until - time.monotonic())
+
+    def _record_shadow_rate_limit(self, err: TCXRateLimited) -> None:
+        """Apply one vendor response to every REST caller, without delaying WebSocket I/O."""
+        self.shadow_rate_limit_count += 1
+        self.last_shadow_rate_limited_at = _utc_now_iso()
+        self.last_shadow_error = str(err)
+        self._shadow_recovery_successes = 0
+        self.shadow_poll_interval = min(
+            SHADOW_RATE_LIMIT_MAX_INTERVAL,
+            max(SHADOW_INTERVAL * 2, self.shadow_poll_interval * 2),
+        )
+        # The cap applies only to our local policy, never to the server's minimum.
+        delay = max(self.shadow_poll_interval, err.retry_after or 0)
+        self._shadow_cooldown_until = max(self._shadow_cooldown_until, time.monotonic() + delay)
+        if not self.websocket_connected:
+            self.cloud_reachable = False
+
     async def async_get_shadow(self) -> dict[str, Any]:
-        """Read the TCX shadow and account for every failed attempt."""
+        """Serialize logical reads; defer all callers during a shared REST cooldown."""
         self.shadow_request_count += 1
-        try:
-            return await self._async_get_shadow()
-        except Exception:
-            self.shadow_failure_count += 1
-            raise
+        async with self._shadow_lock:
+            # Check after acquiring the lock: an earlier queued read may get a 429.
+            remaining = self.shadow_cooldown_remaining
+            if remaining > 0:
+                self.shadow_deferred_count += 1
+                raise TCXShadowDeferred(remaining)
+            try:
+                result = await self._async_get_shadow()
+            except TCXRateLimited as err:
+                self.shadow_failure_count += 1
+                self._record_shadow_rate_limit(err)
+                raise
+            except Exception:
+                self.shadow_failure_count += 1
+                self._shadow_recovery_successes = 0
+                raise
+            self._shadow_recovery_successes += 1
+            if self._shadow_recovery_successes >= SHADOW_RATE_LIMIT_RECOVERY_SUCCESSES:
+                self.shadow_poll_interval = max(SHADOW_INTERVAL, self.shadow_poll_interval / 2)
+                self._shadow_recovery_successes = 0
+            return result
 
     async def _async_get_shadow(self) -> dict[str, Any]:
         """Read the TCX Zodiac shadow when that endpoint is available.
@@ -1018,6 +1076,7 @@ class TCXClient:
         for version in ("v1", "v2"):
             url = f"{ZODIAC_API}/devices/{version}/{self.device_id}/shadow"
             try:
+                self.shadow_http_attempt_count += 1
                 async with self._session.get(
                     url,
                     headers=headers,
@@ -1030,16 +1089,11 @@ class TCXClient:
                         unsupported.append(f"{version} HTTP {response.status}")
                         continue
                     if response.status == 429:
-                        retry_after: float | None = None
-                        retry_after_header = response.headers.get("Retry-After")
-                        if retry_after_header is not None:
-                            try:
-                                retry_after = max(0.0, float(retry_after_header))
-                            except ValueError:
-                                pass
                         raise TCXRateLimited(
                             f"TCX shadow {version} returned HTTP 429",
-                            retry_after=retry_after,
+                            retry_after=retry_after_seconds(
+                                response.headers.get("Retry-After"), now=time.time()
+                            ),
                         )
                     if response.status >= 400:
                         raise TCXConnectionError(
@@ -1061,7 +1115,6 @@ class TCXClient:
             self.cloud_reachable = True
             self.last_error = None
             self.last_shadow_error = None
-            self.shadow_poll_interval = SHADOW_INTERVAL
             self.last_shadow_update_at = _utc_now_iso()
             self.shadow_success_count += 1
             self._record_controller_mode(
@@ -2282,18 +2335,10 @@ class TCXClient:
                 # periodically to guarantee a fresh subscription.
                 self.last_shadow_error = str(err)
                 await self._notify_status()
-            except TCXRateLimited as err:
-                self.shadow_rate_limit_count += 1
-                self.last_shadow_rate_limited_at = _utc_now_iso()
-                self.last_shadow_error = str(err)
-                next_interval = max(
-                    SHADOW_INTERVAL * 2,
-                    self.shadow_poll_interval * 2,
-                    err.retry_after or 0,
-                )
-                self.shadow_poll_interval = min(SHADOW_RATE_LIMIT_MAX_INTERVAL, next_interval)
-                if not self.websocket_connected:
-                    self.cloud_reachable = False
+            except (TCXRateLimited, TCXShadowDeferred):
+                # Both subclass TCXConnectionError: keep this handler before the
+                # generic connection-error branch so cooldowns stay distinct.
+                # The shared reader already accounted for the response/deferred call.
                 await self._notify_status()
             except TCXAuthError as err:
                 self.last_error = str(err)
@@ -2316,7 +2361,14 @@ class TCXClient:
                 await self._notify_status()
 
             try:
-                await asyncio.sleep(self.shadow_poll_interval)
+                # Long server deadlines use bounded waits, but every wake still
+                # passes through the shared gate before any authentication/HTTP I/O.
+                await asyncio.sleep(
+                    min(
+                        SHADOW_RATE_LIMIT_MAX_INTERVAL,
+                        max(self.shadow_poll_interval, self.shadow_cooldown_remaining),
+                    )
+                )
             except asyncio.CancelledError:
                 raise
 

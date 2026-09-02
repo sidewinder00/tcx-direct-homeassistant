@@ -25,7 +25,7 @@ TCX Direct connects Home Assistant directly to the iAquaLink/Zodiac cloud. It do
 
 ## Current version
 
-**v0.3.3**
+**v0.3.4**
 
 Release notes and downloads: [GitHub Releases](https://github.com/sidewinder00/tcx-direct-homeassistant/releases).
 Native schedule management remains experimental and disabled by default.
@@ -136,7 +136,7 @@ transmission. The integration never forces a controller out of maintenance mode.
 Freeze Protection Setpoint remains read-only and has no unit until its unit
 behavior is independently established.
 
-Integration Version is an enabled diagnostic sensor that displays the installed semantic release, currently `0.3.3`, and remains available when TCX cloud data is unavailable. Its numeric `version_code` attribute uses `major × 1,000,000 + minor × 1,000 + patch`, so v0.2.11 is `2011` and v0.3.3 is `3003` without treating a semantic version as a decimal number.
+Integration Version is an enabled diagnostic sensor that displays the installed semantic release, currently `0.3.4`, and remains available when TCX cloud data is unavailable. Its numeric `version_code` attribute uses `major × 1,000,000 + minor × 1,000 + patch`, so v0.2.11 is `2011` and v0.3.4 is `3004` without treating a semantic version as a decimal number.
 
 The `tcx_direct.start_pump_at_speed` action targets the Pump Power switch and accepts
 an `rpm` value. It confirms the persistent filtration preset before starting a
@@ -178,6 +178,34 @@ The integration is designed around the failure mode where an iAquaLink/TCX conne
 - Explicit live/cached-state and last-reported-equipment-state diagnostics
 - Last command result and failure details independent from transport health
 
+### REST pacing in v0.3.4
+
+Version 0.3.4 shares one REST cooldown across polling, startup,
+explicit reads and timeout-triggered refreshes. A read during cooldown returns a
+local deferred error without another HTTP request; setup can still start the
+WebSocket transport. Reads are serialized, and queued readers recheck the deadline.
+They are not satisfied from an older cached response.
+
+The server's retry minimum is not shortened by the integration's local backoff cap.
+Local backoff halves only after two consecutive successful reads, down to the normal
+120-second polling interval. Healthy WebSocket updates and equipment commands remain
+available during REST cooldown; an unconfirmed command still times out and is not
+automatically resent. Native schedule testing remains paused.
+
+Pacing state is per client/config-entry session, not an account-wide quota manager
+or persistent across reloads. Do not reload repeatedly to defeat a cooldown. Explicit
+reads outside cooldown are still possible; this is not a general requests-per-second
+limiter. A read queued behind another in-flight REST read may wait for that request,
+but no request lock is held while sleeping through a cooldown.
+
+Some callers also hold the equipment-control lock while waiting for REST. A
+timeout-triggered refresh or an explicit native REST read can therefore delay later
+equipment commands until its queued read finishes. One earlier read can involve two
+20-second HTTP attempts; authentication and other queued reads can add time, so
+40 seconds is not a strict end-to-end bound. This patch retains that lock ordering.
+
+This release improves REST pacing; it does not resolve the native schedule incident.
+
 ## Development installation
 
 Home Assistant 2026.8.0 or newer is required.
@@ -217,6 +245,26 @@ Home Assistant's **Download diagnostics** output includes connection health,
 command results, controller-mode changes, data freshness and bounded development
 traces. The integration attempts to redact credentials, tokens, device and network
 identifiers, coordinates and session information.
+
+Version 0.3.4 adds REST `http_attempt_count`, `deferred_count`,
+`cooldown_remaining_seconds` and `cooldown_indefinite`. `request_count` remains the
+number of logical read calls, including locally deferred calls; `failure_count`
+excludes local cooldown deferrals. `rate_limit_count` counts actual vendor 429
+responses from all REST callers, not repeated local deferrals. One logical read may
+attempt more than one supported API version, so it can produce multiple HTTP attempts.
+In-flight or cancelled calls can leave a remainder between logical calls and the
+sum of successes, failures and deferrals; that remainder is not another vendor 429.
+`poll_interval_seconds` describes the local backoff policy; a server deadline can
+require a longer wait. An unrepresentably large server delay pauses REST for the
+session and is reported as indefinite rather than emitting non-finite JSON values.
+
+An indefinite cooldown has no automatic in-session exit. If diagnostics actually
+show `cooldown_indefinite: true`, preserve them and investigate the abnormal server
+response before considering a single supervised integration reload. That exceptional
+recovery resets the local session; it does not establish that the server is ready.
+If the condition recurs, stop retrying. Do not use reloads to bypass ordinary finite
+cooldowns or repeatedly probe an indefinite one. Reloading also briefly interrupts
+the integration's WebSocket connection and controls.
 
 Post-prime diagnostics retain a limited sequence of observations and decisions.
 The passive native-schedule trace also has size and history limits; a missing event

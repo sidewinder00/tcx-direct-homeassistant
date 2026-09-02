@@ -1,4 +1,8 @@
-# Experimental native schedules — v0.3.3
+# Experimental native schedules — v0.3.4
+
+Version 0.3.4 changes shared REST pacing, not native schedule write or confirmation
+behavior. Explicit REST reads now respect the same cooldown as other callers;
+native schedule testing remains paused.
 
 > [!WARNING]
 > **Native schedule testing is paused.** A supervised create initially appeared

@@ -19,6 +19,8 @@ research is maintained separately from the public documentation.
 - REST rate-limit responses trigger a longer polling interval. A healthy live
   stream can continue while the REST path is throttled, so the two are diagnosed
   separately. Do not repeatedly reload or issue extra reads to defeat backoff.
+  Version 0.3.4 extends the cooldown to all REST readers, including startup and
+  timeout refreshes; see the [REST pacing summary](../README.md#rest-pacing-in-v034).
 - Home Assistant stores the last known state for startup continuity. Diagnostics
   distinguish restored cache from newly received data; cached values are not proof
   of current physical equipment state.

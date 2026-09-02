@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from homeassistant.components.diagnostics import async_redact_data
@@ -48,6 +49,7 @@ async def async_get_config_entry_diagnostics(
     runtime = entry.runtime_data
     client = runtime.client
     coordinator = runtime.coordinator
+    cooldown_remaining = client.shadow_cooldown_remaining
 
     diagnostics = {
         "integration": {
@@ -109,6 +111,12 @@ async def async_get_config_entry_diagnostics(
             "last_rate_limited_at": client.last_shadow_rate_limited_at,
             "poll_interval_seconds": client.shadow_poll_interval,
             "request_count": client.shadow_request_count,
+            "http_attempt_count": client.shadow_http_attempt_count,
+            "deferred_count": client.shadow_deferred_count,
+            "cooldown_remaining_seconds": (
+                cooldown_remaining if math.isfinite(cooldown_remaining) else None
+            ),
+            "cooldown_indefinite": not math.isfinite(cooldown_remaining),
             "success_count": client.shadow_success_count,
             "failure_count": client.shadow_failure_count,
             "rate_limit_count": client.shadow_rate_limit_count,
