@@ -4,7 +4,7 @@ This document records TCX cloud behavior that has been observed while developing
 
 The iAquaLink/TCX cloud protocol is unofficial and may change without notice.
 
-## Native schedule protocol (experimental v0.3.1)
+## Native schedule protocol (experimental v0.3.2)
 
 An official-app capture sequence established the following desired payloads and
 matching reported states for one Pool Filtration entry:
@@ -32,18 +32,32 @@ The implementation uses the existing `tcx` write namespace and requires separate
 on-controller validation. It sends full individual entries for edits/toggles,
 preserving unknown fields, rather than assuming partial edits are accepted.
 
-From v0.3.1, schedule gates share normalized equipment matching and reported
+Since v0.3.1, schedule gates share normalized equipment matching and reported
 numeric parsing with pump control, but still require unique pool/filter objects.
-Fresh schedule reads validate `sh` in the specific returned REST response;
-transport observation counters are separate and cannot authorize a write.
-Pending uncertain writes can also be explicitly reviewed and acknowledged using
-a newly received complete `Authorization` schedule snapshot, requested through
-the existing read-only subscription on the same connection. Ordinary reported
-deltas and cached snapshots are insufficient. This verifies fresh receipt, not a
-vendor transaction ID or a confirmed request/response correlation token. The
-acknowledgement source and revision are persisted; subsequent writes still require
-REST. Exact schedule equality remains intentional: controller-added or normalized
-fields cause uncertainty, not automatic acceptance or retransmission.
+
+A live v0.3.1 empty-schedule diagnostic showed a complete Authorization schedule
+snapshot and merged `sh: {}`, while successful REST reads supplied no usable
+schedule table. The Authorization payload includes a `sched` namespace. The dump
+does not retain raw REST responses, so it does not establish whether the field was
+omitted or non-object, nor that REST can never include it with stored schedules.
+
+Version 0.3.2 therefore requests a new complete Authorization snapshot for normal
+read, preview, apply preflight, apply readback and acknowledgement. This replaces
+the REST-only write prerequisite. Each wait is bounded and tied to the socket
+that received the snapshot; ordinary deltas, desired echoes, cached tables and
+REST observation counters cannot satisfy it. `sh: {}` is a valid empty table;
+missing/non-object `sh` is not. Reads no longer require a pending uncertain write.
+Apply remains tied to its preflight connection across journal persistence and
+readback. Explicit REST reads/acknowledgements still validate the specific response
+and never silently fall back; they do not select REST for preview/apply.
+
+This verifies fresh receipt, not a vendor transaction ID or a confirmed
+request/response correlation token: an Authorization response already in flight
+when a request is registered cannot be distinguished from its direct reply. The
+acknowledgement source and revision are persisted, and new pending operations
+record their snapshot source. Exact schedule equality remains intentional:
+controller-added or normalized fields cause uncertainty, not automatic acceptance
+or retransmission. Live schedule writes and execution still need supervised tests.
 
 See [native schedule development guide](NATIVE_SCHEDULES.md) for safeguards,
 known limitations, actions, recovery, and the remaining hardware test gates.

@@ -110,13 +110,15 @@ def test_other_snapshot_cannot_certify_rest_response_missing_sh(concurrent_sourc
 
         rig.client.async_get_shadow = wrong_response
         with pytest.raises(ScheduleError, match="complete schedule table"):
-            await rig.create()
+            await rig.manager.async_read(source="rest")
         assert not rig.messages
 
     asyncio.run(run())
 
 
-def test_empty_table_is_valid_but_missing_table_is_not():
+def test_empty_table_is_valid_but_missing_table_is_not(monkeypatch):
+    monkeypatch.setattr(schedules, "WS_SNAPSHOT_TIMEOUT", 0.01)
+
     async def run():
         rig = Rig({})
         plan = await rig.create()
@@ -124,7 +126,7 @@ def test_empty_table_is_valid_but_missing_table_is_not():
         assert rig.remote["sh"]["1"] == entry()
         rig = Rig()
         rig.remote.pop("sh")
-        with pytest.raises(ScheduleError, match="complete schedule table"):
+        with pytest.raises(ScheduleError, match="No new complete"):
             await rig.create()
 
     asyncio.run(run())
@@ -139,7 +141,7 @@ def test_rest_snapshot_changed_during_notification_is_rejected():
 
         rig.client._notify_state = notify
         with pytest.raises(ScheduleError, match="changed while reading"):
-            await rig.create()
+            await rig.manager.async_read(source="rest")
         assert not rig.messages
 
     asyncio.run(run())
@@ -168,7 +170,7 @@ def test_ws_read_and_ack_each_request_new_snapshot_and_persist_provenance():
     async def run():
         rig = recovery_rig()
         with pytest.raises(api.TCXShadowUnsupported):
-            await rig.manager.async_read()
+            await rig.manager.async_read(source="rest")
         result = await rig.manager.async_read(source="websocket_authorization")
         assert rig.disk["pending"] is not None
         assert result["snapshot_source"] == "websocket_authorization"
@@ -189,8 +191,12 @@ def test_ws_read_and_ack_each_request_new_snapshot_and_persist_provenance():
         await restarted.manager.async_apply(plan["plan_id"])
         assert restarted.disk["last_acknowledgement"] == audit
         rig.manager.writes_enabled = True
+        plan = await rig.manager.async_preview(
+            "create", start="12:00", end="12:15", weekday_codes=[5], rpm=2700
+        )
+        assert plan["snapshot_source"] == "websocket_authorization"
         with pytest.raises(api.TCXShadowUnsupported):
-            await rig.create()
+            await rig.manager.async_read(source="rest")
 
     asyncio.run(run())
 
@@ -295,9 +301,9 @@ def test_ws_ack_checks_review_revision_and_pending_id():
             )
         assert len(rig.messages) == 2 and rig.disk["pending"] is not None
         rig.manager.pending = None
-        with pytest.raises(ScheduleError, match="requires an uncertain"):
-            await rig.manager.async_read(source="websocket_authorization")
-        assert len(rig.messages) == 2
+        result = await rig.manager.async_read(source="websocket_authorization")
+        assert result["status"] == "read_only"
+        assert len(rig.messages) == 3
 
     asyncio.run(run())
 
@@ -335,6 +341,8 @@ def test_controller_extra_fields_keep_exact_confirmation_and_recovery(monkeypatc
         send = rig.send_json
 
         async def extra_field(frame):
+            if frame.get("action") == "subscribe":
+                return await send(frame)
             frame = deepcopy(frame)
             frame["payload"]["state"]["desired"]["sh"]["add"]["vendor_extra"] = 1
             await send(frame)
@@ -344,8 +352,8 @@ def test_controller_extra_fields_keep_exact_confirmation_and_recovery(monkeypatc
             await rig.manager.async_apply(plan["plan_id"])
         assert rig.remote["sh"]["1"]["vendor_extra"] == 1
         assert rig.manager.pending is not None
-        readback = await rig.manager.async_read()
-        await rig.manager.async_acknowledge(plan["plan_id"], readback["revision"])
+        readback = await rig.manager.async_read(source="rest")
+        await rig.manager.async_acknowledge(plan["plan_id"], readback["revision"], source="rest")
         assert len(rig.messages) == 1
         assert rig.disk["last_acknowledgement"]["source"] == "rest"
 

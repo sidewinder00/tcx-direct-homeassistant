@@ -1,4 +1,4 @@
-# Experimental native schedules — v0.3.1
+# Experimental native schedules — v0.3.2
 
 This is a development feature, not a migration or a replacement for the existing
 HA pump controller. Publishing this release does not install it in Home Assistant
@@ -25,19 +25,33 @@ Native schedule execution and offline persistence still need hardware validation
 The captured app commands establish protocol shapes, not proof that this build
 has successfully written to a real controller.
 
+## Why the snapshot source changed
+
+The first v0.3.1 empty-table check found a complete Authorization schedule snapshot
+with `sh: {}`, while successful REST reads supplied no usable schedule table. The
+REST-only prerequisite prevented even the initial read. This was a transport
+assumption in the integration, not a reason to create a schedule in the app.
+
+Version 0.3.2 uses **newly requested WebSocket Authorization snapshots** for normal
+reads, previews, apply preflight/readback and acknowledgement. It never promotes
+the old cached table to a fresh result. This deliberately replaces v0.3.1's
+REST-only write prerequisite; it does not remove the freshness or write gates.
+Explicit REST reads/acknowledgements remain available when REST actually supplies
+the schedule table, with no automatic fallback between sources.
+
 ## Restrictions and safeguards
 
 1. **Writes default off.** Opt in under the integration's Configure/options dialog
    only for supervised testing. Changing this option does not reload the integration
    or affect equipment. User-initiated apply/recovery actions require an HA admin;
    HA's internal automation context is also accepted by its admin-service helper.
-2. Default reads, previews and applies require a successful **complete REST shadow
-   containing `sh` in that specific response**. Concurrent updates cannot substitute
-   for missing data. An explicitly empty `sh: {}` is valid; missing or non-object
-   `sh` is not. Cached state and a connected socket alone cannot authorize a write.
-   If REST is unavailable or rate-limited, writes fail closed. An explicit
-   WebSocket recovery-only path is described below; normal equipment controls and
-   passive schedule observation still work over WebSocket.
+2. Every normal read, preview, apply preflight and final readback requests a new
+   **complete Authorization snapshot containing a `sh` object**. The request and
+   received snapshot must use the same current WebSocket, with a 20-second timeout.
+   Cached tables, ordinary reported deltas, desired echoes and REST observations
+   cannot fulfill that wait. An explicitly empty `sh: {}` is valid; missing or
+   non-object `sh` is not. If no complete snapshot arrives, fail closed without
+   trying another source. A connection alone does not establish freshness.
 3. Preview IDs last five minutes, are entry-specific, are consumed once, and do
    not survive reload/restart. Applying re-reads the table and rejects any change
    since preview. It sends only the target `sh` entry, preserving unknown fields
@@ -60,11 +74,14 @@ has successfully written to a real controller.
    pool entry cannot be interpreted safely, enabling another is blocked.
 7. Known Auto mode and an active WebSocket are required. Service, Time Out, Quick
    Clean, unknown modes and missing mode data are never overridden.
+   The apply operation stays on the connection that supplied its fresh preflight;
+   changing connections while saving the journal or verifying the write stops it.
 8. Before transmission, a separate HA Store journal records an uncertain operation.
    A timeout, cancellation, storage error, disconnect, or failed verification leaves
    writes blocked for review. Nothing retries or rolls back a controller command.
    The latch survives restart; it is separate from delayed telemetry cache writes.
-9. Success requires a new matching reported update and then fresh shadow readback.
+9. Success requires a new matching reported update and then a separately requested
+   complete Authorization readback.
    A desired-state echo alone is not confirmation. If other entries change during
    the operation, stop for review instead of overwriting them. Exact entry equality
    is intentional: if TCX adds or normalizes fields, a write that actually succeeded
@@ -76,12 +93,22 @@ a confirmed transaction/idempotency mechanism here. Do not edit schedules from
 another client during apply. Never interpret a transport confirmation as proof
 that the motor physically ran at the scheduled speed.
 
+Authorization freshness means a complete snapshot was **received after the new
+subscription request was registered**, on the same connection. No confirmed vendor
+request/response correlation token is available; an already-in-flight Authorization
+response cannot be distinguished from a reply to that particular subscription.
+This is not an independent REST cross-check or proof of physical equipment state.
+
 Explicit reads, previews, applies and acknowledgements share the equipment control
 lock, including their network waits. Do not poll these actions from an automation:
 they can delay a concurrent equipment command. The passive Native Schedules sensor
 uses existing received telemetry and does not issue extra requests.
 
 ## First supervised development workflow
+
+Create, edit and delete through **Home Assistant**; use iAquaLink only to inspect
+the results. Leave existing HA schedules and automations unchanged. Start with
+experimental writes off and verify the read before opting into any apply action.
 
 Use Developer tools → Actions. Choose the TCX config entry in the form. Replace
 the placeholders below with the selected config-entry ID and returned preview ID;
@@ -93,8 +120,15 @@ neither is a controller password or serial number.
 action: tcx_direct.get_native_schedules
 data:
   config_entry_id: YOUR_CONFIG_ENTRY_ID
+  source: websocket_authorization
 response_variable: native_schedules
 ```
+
+This is also the default if `source` is omitted. Remove or replace an explicit
+`source: rest` saved from the v0.3.1 instructions; existing YAML is not rewritten
+automatically. Expect `snapshot_source: websocket_authorization`, a revision, and
+the stored schedule list. Read and preview do not require a pending operation or
+write opt-in. Stop and capture the response/diagnostics if the read fails.
 
 ### Preview a disabled Friday test entry
 
@@ -131,6 +165,19 @@ Use the returned `schedule_id`, never assume the new slot is `1`. Inspect the
 entry in iAquaLink and download diagnostics. Do not automatically chain preview
 and apply in a recurring automation during this development phase.
 
+For the first complete storage test, keep both entries **disabled**:
+
+| Test | Day | Controller-local time | RPM |
+| --- | --- | --- | --- |
+| A | Friday (`[5]`) | 11:00–11:15 | 2650 |
+| B | Friday (`[5]`) | 11:30–11:45 | 2700 |
+
+Create A using the example above, then preview/apply B with its own fields and
+`enabled: false`. Record the returned IDs. Preview/apply an update of A to 2750 RPM
+and verify B is unchanged. Preview/apply deletion of A, verify B remains, then
+preview/apply deletion of B. Inspect in iAquaLink after **each** apply and stop on
+any error or unexpected change. These are storage tests, not scheduled pump runs.
+
 For an edit, preview with `operation: update`, the returned `schedule_id`, and
 only the changed fields (for example `rpm: 2700`). For `enable`, `disable`, and
 `delete`, send only `operation` and `schedule_id` plus the config-entry ID. Then
@@ -153,9 +200,8 @@ Do not retry the add, restart to clear it, or delete the journal.
    A failed call might have reached TCX; duplicate-looking entries need explicit
    inspection, not an automatic "cleanup" or recreation.
 
-The default acknowledgement source is REST, as for reads. If REST is unavailable
-but the current WebSocket is working, explicitly choose the recovery-only source
-on **both** calls:
+The default acknowledgement source is `websocket_authorization`, as for reads.
+Use the same selected source for the reviewed read and acknowledgement:
 
 ```yaml
 action: tcx_direct.get_native_schedules
@@ -177,20 +223,23 @@ data:
 response_variable: recovery_result
 ```
 
-This source is available only while an uncertain write is pending. Each call sends
-a read-only Authorization subscription and waits up to 20 seconds for a newly
-received complete Authorization snapshot containing `sh` on that same connection.
-Old cached snapshots, normal reported deltas, missing tables, connection changes,
-timeouts, and a changed revision cannot clear the latch. There is no force clear or
-automatic fallback. This is fresh-receipt verification, not a vendor transaction
-or request/response correlation guarantee. If neither source works, wait and keep
-the block in place. Clearing it through WebSocket **does not** let the next preview
-or write bypass REST.
+Acknowledgement still requires the matching pending operation and obtains another
+fresh snapshot; the preceding read cannot be reused as verification. Old cached
+snapshots, normal reported deltas, missing tables, connection changes, timeouts,
+and a changed revision cannot clear the latch. There is no force clear or replay.
+
+`source: rest` remains an explicit alternative for reads and acknowledgement only.
+It requires a usable `sh` object in that specific returned REST response; a
+concurrent update cannot certify it, and missing data is not treated as empty.
+Choosing REST does not change the source used by future previews/applies. If no
+source can produce a fresh table, wait and keep the block in place. After clearing,
+a new write needs a new preview, opt-in, Auto mode and new Authorization snapshots.
 
 The durable journal keeps the pending operation's ID, operation, schedule ID, time,
-desired payload and state. After acknowledgement it also stores
+desired payload and state; new operations also record their `snapshot_source`.
+After acknowledgement it also stores
 `last_acknowledgement` with `plan_id`, `at`, `source` and `revision`, exposed in the
-sensor/diagnostics. Existing v0.3.0 journals remain readable. The surrounding
+sensor/diagnostics. Existing v0.3.0/v0.3.1 journals remain readable. The surrounding
 bounded operation history remains in memory and is lost on restart; the pending
 context and last acknowledgement are not.
 
@@ -202,15 +251,20 @@ freshness/provenance, normalized reported values and unique equipment matching,
 field preservation, stale previews, duplicate/repeated apply, serialized operations,
 storage failure, cancellation, timeout/restart recovery, connection replacement,
 exact readback mismatches, recovery audit persistence, and HA adapters.
+The offline two-disabled-entry test checks creation, isolated editing, deletion
+and unchanged equipment values without any REST schedule request. Per-stage tests
+reject cached/delta/REST/wrong-connection/missing-table substitutes during read,
+preview, preflight and final readback. A synthetic receiver test exercises an empty
+`sched` namespace through the actual WebSocket handler, without a pending write.
 Synthetic fixtures contain no private diagnostic dumps or controller identifiers.
 
 Still required with the owner supervising:
 
 - Create two disabled entries from HA; edit one and verify the other is untouched.
-- Verify complete REST/Authorization responses with no schedules, including whether
-  a controller omits `sh` instead of returning an empty object; omission stays blocked.
-- Supervise the explicit WebSocket recovery path when REST is unavailable. Offline
-  tests establish safeguards, not live firmware support for a subscription refresh.
+- Confirm a newly requested Authorization snapshot works repeatedly with no schedules
+  and with stored entries; the observed startup snapshot alone does not prove this.
+- Supervise WebSocket recovery when an operation needs review. Offline tests
+  establish safeguards, not live firmware behavior or persistence guarantees.
 - Verify remaining weekday mappings and the meaning of the default-speed sentinel.
 - Verify native create/edit/disable/delete against the app and controller, including
   capacity failures. Slot numbers observed in captures do not establish capacity.

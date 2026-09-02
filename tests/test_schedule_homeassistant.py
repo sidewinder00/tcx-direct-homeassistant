@@ -25,6 +25,50 @@ from custom_components.tcx_direct.schedule_services import (  # noqa: E402
     _SCHEMAS,
     async_register_schedule_services,
 )
+from custom_components.tcx_direct.schedules import SCHEDULE_SNAPSHOT_SOURCE  # noqa: E402
+
+
+def test_default_ha_read_of_empty_schedule_table_with_writes_disabled(tmp_path):
+    async def run():
+        hass = HomeAssistant(str(tmp_path))
+        rig = Rig({})
+        rig.manager.writes_enabled = False
+        rig.client.async_get_shadow = AsyncMock(side_effect=AssertionError("No REST required"))
+        config = SimpleNamespace(
+            domain="tcx_direct",
+            state=ConfigEntryState.LOADED,
+            runtime_data=SimpleNamespace(client=rig.client),
+        )
+        hass.config_entries = SimpleNamespace(async_get_entry=lambda key: config)
+        async_register_schedule_services(hass)
+        result = await hass.services.async_call(
+            "tcx_direct",
+            "get_native_schedules",
+            {"config_entry_id": "test"},
+            blocking=True,
+            return_response=True,
+        )
+        assert result["snapshot_source"] == SCHEDULE_SNAPSHOT_SOURCE
+        assert result["schedules"] == []
+        assert result["pending_write"] is None and result["status"] == "read_only"
+        assert len(rig.subscriptions) == 1 and not rig.messages
+        rig.client.async_get_shadow.assert_not_awaited()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("name", ["get_native_schedules", "acknowledge_native_schedule_write"])
+def test_source_default_matches_ui_schema_and_python(name):
+    import yaml
+
+    services = yaml.safe_load(Path("custom_components/tcx_direct/services.yaml").read_text())
+    args = {"config_entry_id": "test"}
+    if name == "acknowledge_native_schedule_write":
+        args.update(plan_id="test-pending", revision="0" * 64)
+    assert _SCHEMAS[name](args)["source"] == SCHEDULE_SNAPSHOT_SOURCE
+    assert services[name]["fields"]["source"]["default"] == SCHEDULE_SNAPSHOT_SOURCE
+    for source in ("rest", "websocket_authorization"):
+        assert _SCHEMAS[name]({**args, "source": source})["source"] == source
 
 
 def test_real_ha_preview_apply_services_and_missing_entries(tmp_path):

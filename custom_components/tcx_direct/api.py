@@ -2086,7 +2086,8 @@ class TCXClient:
             bootstrap_task: asyncio.Task[Any] | None = None
             try:
                 reconnecting = self.websocket_connect_count > 0
-                self._ws = await self._open_websocket()
+                ws = await self._open_websocket()
+                self._ws = ws
                 self.websocket_connect_count += 1
                 if reconnecting:
                     self.websocket_reconnect_count += 1
@@ -2095,12 +2096,12 @@ class TCXClient:
                 self.last_error = None
                 await self._notify_status()
                 bootstrap_task = asyncio.create_task(
-                    self._bootstrap_resubscribe(self._ws),
+                    self._bootstrap_resubscribe(ws),
                     name="tcx_direct_bootstrap",
                 )
 
-                async for msg in self._ws:
-                    if self._stopping or self._reconnect_requested.is_set():
+                async for msg in ws:
+                    if self._stopping or self._reconnect_requested.is_set() or self._ws is not ws:
                         break
 
                     self.ws_messages_received += 1
@@ -2179,7 +2180,7 @@ class TCXClient:
                                 source="websocket_authorization"
                                 if data.get("service") == "Authorization"
                                 else "websocket",
-                                websocket=self._ws,
+                                websocket=ws,
                             )
                             self._resolve_pending_control()
                             self.last_ws_reported_monotonic = now

@@ -13,7 +13,7 @@ from homeassistant.helpers.service import async_register_admin_service
 
 from .api import TCXError
 from .const import DOMAIN
-from .schedules import OPERATIONS, ScheduleError
+from .schedules import OPERATIONS, SCHEDULE_SNAPSHOT_SOURCE, ScheduleError
 
 
 def _integer_rpm(value):
@@ -36,7 +36,11 @@ def _weekday(value):
 
 
 _ENTRY = {vol.Required("config_entry_id"): cv.string}
-_SOURCE = {vol.Optional("source", default="rest"): vol.In(("rest", "websocket_authorization"))}
+_SOURCE = {
+    vol.Optional("source", default=SCHEDULE_SNAPSHOT_SOURCE): vol.In(
+        ("rest", "websocket_authorization")
+    )
+}
 _SCHEMAS = {
     "get_native_schedules": vol.Schema({**_ENTRY, **_SOURCE}),
     "preview_native_schedule": vol.Schema(

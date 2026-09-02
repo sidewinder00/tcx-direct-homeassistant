@@ -13,7 +13,7 @@
     },
     "get_native_schedules": {
       "name": "Get native schedules",
-      "description": "Read a fresh TCX schedule table. Does not send equipment or schedule writes.",
+      "description": "Request a fresh complete Authorization schedule snapshot, including an empty table. Available with experimental writes disabled. Does not send equipment or schedule writes.",
       "fields": {
         "config_entry_id": {
           "name": "TCX controller",
@@ -21,13 +21,13 @@
         },
         "source": {
           "name": "Snapshot source",
-          "description": "REST is the default. WebSocket Authorization requests a new complete snapshot for recovery only, while an uncertain write is pending."
+          "description": "WebSocket Authorization is the default and requests a new complete schedule snapshot. REST is an explicit alternative only when its response includes a schedule table; missing data is never treated as empty."
         }
       }
     },
     "preview_native_schedule": {
       "name": "Preview native schedule",
-      "description": "Preview one experimental Pool Filtration schedule change without writing it. New entries default to disabled. Review the response before applying.",
+      "description": "Preview one experimental Pool Filtration schedule change using a new complete Authorization snapshot, without writing it. New entries default to disabled. Review the response before applying.",
       "fields": {
         "config_entry_id": {
           "name": "TCX controller",
@@ -65,7 +65,7 @@
     },
     "apply_native_schedule": {
       "name": "Apply native schedule",
-      "description": "Apply a reviewed, single-use preview. Requires experimental writes enabled in options, Auto mode, and unchanged fresh schedule data. Never retries an uncertain write.",
+      "description": "Apply a reviewed, single-use preview. Requires experimental writes enabled in options, Auto mode, and an unchanged new Authorization schedule snapshot. Success requires reported confirmation and another complete Authorization readback. Never retries an uncertain write.",
       "fields": {
         "config_entry_id": {
           "name": "TCX controller",
@@ -79,7 +79,7 @@
     },
     "acknowledge_native_schedule_write": {
       "name": "Acknowledge uncertain schedule write",
-      "description": "Revalidate the reviewed schedule revision before clearing the write block. WebSocket recovery sends only a read-only subscription, never an equipment write. Subsequent writes still require REST.",
+      "description": "Revalidate the reviewed schedule revision with another fresh snapshot before clearing the write block. Authorization sends only a read-only subscription, never an equipment write. A matching pending operation is required; there is no force clear or replay.",
       "fields": {
         "config_entry_id": {
           "name": "TCX controller",

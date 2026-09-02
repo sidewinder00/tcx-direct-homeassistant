@@ -39,6 +39,7 @@ PLAN_TTL = 300
 MAX_PLANS = 10
 SCHEDULE_TIMEOUT = 45
 WS_SNAPSHOT_TIMEOUT = 20
+SCHEDULE_SNAPSHOT_SOURCE = "websocket_authorization"
 OPERATIONS = ("create", "update", "enable", "disable", "delete")
 _SLOT = re.compile(r"[1-9][0-9]*\Z")
 _TIME = re.compile(r"(?:[01][0-9]|2[0-3]):[0-5][0-9]\Z")
@@ -154,6 +155,7 @@ class SchedulePlan:
             "operation": self.operation,
             "schedule_id": self.schedule_id,
             "revision": schedule_revision(self.before),
+            "snapshot_source": SCHEDULE_SNAPSHOT_SOURCE,
             "expires_in_seconds": max(0, int(PLAN_TTL - (time.monotonic() - self.created))),
             "before": sanitize_diagnostics(self.before.get(self.schedule_id)),
             "after": sanitize_diagnostics(self.after),
@@ -290,7 +292,8 @@ class TCXSchedules:
             {"at": _now(), "state": state, "plan_id": plan_id, "operation": operation}
         )
 
-    async def _fresh(self) -> dict[str, Any]:
+    async def _fresh_rest(self) -> dict[str, Any]:
+        """Explicit REST reads still require a table in this particular response."""
         response = await self.client.async_get_shadow()
         reported = _collect_reported(response)
         if reported is None or not isinstance(reported.get("sh"), dict):
@@ -302,13 +305,11 @@ class TCXSchedules:
         return table
 
     async def _fresh_websocket(self) -> dict[str, Any]:
-        """Recovery only: request a new Authorization snapshot on this connection."""
-        if not self.pending:
-            raise ScheduleError("WebSocket snapshot recovery requires an uncertain write")
+        """Request a new complete schedule snapshot; never authorize from cached data."""
         self._require_connection()
         ws = self.client._ws
         if not self.client.device_id or self.client.user_id is None:
-            raise ScheduleError("TCX identity is unavailable for snapshot recovery")
+            raise ScheduleError("TCX identity is unavailable for a schedule snapshot")
         future = asyncio.get_running_loop().create_future()
         request = (ws, future)
         self._snapshot_request = request
@@ -318,20 +319,20 @@ class TCXSchedules:
                 table = await future
             self._require_connection()
             if self.client._ws is not ws:
-                raise ScheduleError("TCX connection changed during snapshot recovery")
+                raise ScheduleError("TCX connection changed during the schedule snapshot")
             await self.client._notify_state("websocket")
             self._require_connection()
             if self.client._ws is not ws:
-                raise ScheduleError("TCX connection changed during snapshot recovery")
+                raise ScheduleError("TCX connection changed during the schedule snapshot")
             if self.client.reported.get("sh") != table:
-                raise ScheduleError("Schedules changed during snapshot recovery; read again")
+                raise ScheduleError("Schedules changed during the snapshot; read again")
             return table
         except TimeoutError as err:
             raise ScheduleError(
                 "No new complete WebSocket Authorization schedule snapshot"
             ) from err
         except (aiohttp.ClientError, ConnectionError, RuntimeError) as err:
-            raise ScheduleError("Unable to obtain a WebSocket recovery snapshot") from err
+            raise ScheduleError("Unable to obtain a WebSocket schedule snapshot") from err
         finally:
             if self._snapshot_request is request:
                 self._snapshot_request = None
@@ -340,12 +341,12 @@ class TCXSchedules:
 
     async def _read_snapshot(self, source: str) -> dict[str, Any]:
         if source == "rest":
-            return await self._fresh()
+            return await self._fresh_rest()
         if source == "websocket_authorization":
             return await self._fresh_websocket()
         raise ScheduleError("Unknown schedule snapshot source")
 
-    async def async_read(self, source: str = "rest") -> dict[str, Any]:
+    async def async_read(self, source: str = SCHEDULE_SNAPSHOT_SOURCE) -> dict[str, Any]:
         async with self.client._control_lock:
             table = await self._read_snapshot(source)
             return {
@@ -414,7 +415,7 @@ class TCXSchedules:
                 raise ScheduleError("Unknown schedule operation")
             if self.pending:
                 raise ScheduleError("Review the uncertain schedule write before planning changes")
-            table = await self._fresh()
+            table = await self._fresh_websocket()
             pool_key, limits = self._pool_context()
             if operation == "create":
                 if schedule_id is not None:
@@ -509,8 +510,9 @@ class TCXSchedules:
                 raise ScheduleError(
                     "Preview expired, was already used, or belongs to another entry"
                 )
-            table = await self._fresh()
+            table = await self._fresh_websocket()
             self._require_writes()
+            ws = self.client._ws
             if table != plan.before:
                 raise ScheduleError("Schedules changed since preview; request a new preview")
             pool_key, limits = self._pool_context()
@@ -520,7 +522,11 @@ class TCXSchedules:
             if plan.after is not None and plan.operation != "disable":
                 self._validate_entry(plan.after, limits)
             if plan.schedule_id is not None and table.get(plan.schedule_id) == plan.after:
-                return {"result": "unchanged", **self.snapshot()}
+                return {
+                    "result": "unchanged",
+                    "snapshot_source": SCHEDULE_SNAPSHOT_SOURCE,
+                    **self.snapshot(),
+                }
             self.pending = {
                 "plan_id": plan_id,
                 "operation": plan.operation,
@@ -528,6 +534,7 @@ class TCXSchedules:
                 "at": _now(),
                 "desired": plan.desired,
                 "state": "outcome_uncertain",
+                "snapshot_source": SCHEDULE_SNAPSHOT_SOURCE,
             }
             assert self._save is not None
             try:
@@ -542,8 +549,8 @@ class TCXSchedules:
                 if (
                     self.client._stopping
                     or not self.client.websocket_connected
-                    or self.client._ws is None
-                    or self.client._ws.closed
+                    or self.client._ws is not ws
+                    or ws.closed
                 ):
                     raise ScheduleError("TCX connection changed while preparing the write")
                 if time.monotonic() - plan.created >= PLAN_TTL:
@@ -559,7 +566,12 @@ class TCXSchedules:
                     confirmation_timeout=SCHEDULE_TIMEOUT,
                 )
                 slot = self._matching_slot(plan, sequence)
-                fresh = await self._fresh()
+                self._require_connection()
+                if self.client._ws is not ws:
+                    raise ScheduleError("TCX connection changed after the schedule write")
+                fresh = await self._fresh_websocket()
+                if self.client._ws is not ws:
+                    raise ScheduleError("TCX connection changed during schedule readback")
                 if slot is None or self._matching_slot(plan, sequence) != slot:
                     raise ScheduleError("Schedule readback did not confirm the intended result")
                 # No rollback: a concurrent app edit must not be silently overwritten.
@@ -570,7 +582,12 @@ class TCXSchedules:
                 await self._save(self._journal(None))
                 self.pending = None
                 self._record("confirmed", plan_id, plan.operation)
-                return {"result": "confirmed", "schedule_id": slot, **self.snapshot()}
+                return {
+                    "result": "confirmed",
+                    "schedule_id": slot,
+                    "snapshot_source": SCHEDULE_SNAPSHOT_SOURCE,
+                    **self.snapshot(),
+                }
             except BaseException:
                 self._record("outcome_uncertain", plan_id, plan.operation)
                 raise
@@ -578,7 +595,7 @@ class TCXSchedules:
                 await self.client._notify_status()
 
     async def async_acknowledge(
-        self, plan_id: str, revision: str, source: str = "rest"
+        self, plan_id: str, revision: str, source: str = SCHEDULE_SNAPSHOT_SOURCE
     ) -> dict[str, Any]:
         """Revalidate a reviewed snapshot before clearing; never send an equipment write."""
         async with self.client._control_lock:
