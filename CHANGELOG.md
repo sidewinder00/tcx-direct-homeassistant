@@ -2,6 +2,26 @@
 
 All notable changes to Jandy TCX Direct are documented here.
 
+## [0.3.0] - 2026-09-02
+
+- Add an enabled read-only Native Schedules diagnostic sensor and fresh-read,
+  preview, apply, and uncertain-write acknowledgement actions.
+- Add opt-in experimental Pool Filtration schedule creation, editing,
+  enabling/disabling, and deletion using captured `sh` commands.
+- Require explicit bounded RPM, a fresh complete REST schedule snapshot, known
+  Auto mode, single-use expiring previews, and unchanged schedule data before writes.
+- Persist a write-ahead uncertainty latch before transmission. Never replay adds
+  after timeout, cancellation, reconnect, restart, or repeated apply calls.
+- Preserve unknown fields and unrelated equipment schedules; reject overlapping
+  enabled blocks and gate unverified overnight execution. Default new entries off.
+- Add synthetic lifecycle, failure/recovery, concurrency, schema, and HA adapter tests.
+- Keep current pump scheduling, manual control, Waterfall restoration, SWG controls,
+  and dashboard configuration unchanged. No live schedule migration or hardware
+  execution testing has been performed for this build.
+- Advance Integration Version to 0.3.0 and its generated numeric code to 3000.
+- Validate with 168 passing tests, including Home Assistant 2026.8.3 adapters,
+  and add a dedicated Home Assistant adapter CI job.
+
 ## [0.2.11] - 2026-08-30
 
 ### Fixed

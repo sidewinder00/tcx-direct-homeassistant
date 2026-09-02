@@ -4,6 +4,36 @@ This document records TCX cloud behavior that has been observed while developing
 
 The iAquaLink/TCX cloud protocol is unofficial and may change without notice.
 
+## Native schedule protocol (experimental v0.3.0)
+
+An official-app capture sequence established the following desired payloads and
+matching reported states for one Pool Filtration entry:
+
+| Operation | Desired payload within `sh` | Reported result |
+| --- | --- | --- |
+| Create | `{"add": {entry}}` | Assigned numbered key containing the entry |
+| Edit | `{"1": {complete_entry}}` | Same key with updated fields |
+| Disable | Complete entry with `en: 0` | Entry retained with `en: 0` |
+| Delete | `{"1": "[DELETED]"}` | Numbered entry becomes `null` |
+
+Subsequent `desired.sh.add: null` and `desired.sh.1: null` are observed cleanup
+echoes, not additional commands the integration should send. Numbered keys are
+controller-assigned; `id` inside an entry is a display label, not the slot ID.
+
+Entry fields observed: `lc: "pool"`, `id: "Filter Pump"`, `on: "T=11:00"`,
+`of: "T=11:15"`, `dw: [5]`, `en: 0/1`, and `ar`. Friday maps to 5. An explicit
+2650 RPM schedule used `ar: 2650` without changing the global 2600 RPM filtration
+preset or manual setpoint. The newly created app entry initially displayed the
+global preset but stored `ar: 0`; its exact default-speed semantics remain unproven.
+No complete individual weekday mapping, schedule-capacity limit, timezone/DST
+behavior, midnight rule, or runtime override priority is inferred from this capture.
+
+The implementation uses the existing `tcx` write namespace and requires separate
+on-controller validation. It sends full individual entries for edits/toggles,
+preserving unknown fields, rather than assuming partial edits are accepted.
+See [native schedule development guide](NATIVE_SCHEDULES.md) for safeguards,
+known limitations, actions, recovery, and the remaining hardware test gates.
+
 ## Cloud transport
 
 TCX Direct currently uses three cloud surfaces:

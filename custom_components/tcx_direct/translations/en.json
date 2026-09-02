@@ -10,6 +10,86 @@
           "description": "Scheduled Pool Filtration RPM to persist and apply."
         }
       }
+    },
+    "get_native_schedules": {
+      "name": "Get native schedules",
+      "description": "Read a fresh TCX schedule table. Does not send equipment or schedule writes.",
+      "fields": {
+        "config_entry_id": {
+          "name": "TCX controller",
+          "description": "Select the TCX Direct integration entry."
+        }
+      }
+    },
+    "preview_native_schedule": {
+      "name": "Preview native schedule",
+      "description": "Preview one experimental Pool Filtration schedule change without writing it. New entries default to disabled. Review the response before applying.",
+      "fields": {
+        "config_entry_id": {
+          "name": "TCX controller",
+          "description": "Select the TCX Direct integration entry."
+        },
+        "operation": {
+          "name": "Operation",
+          "description": "Create, update, enable, disable, or delete one schedule."
+        },
+        "schedule_id": {
+          "name": "Schedule ID",
+          "description": "Numbered ID from Get native schedules. Omit when creating."
+        },
+        "start": {
+          "name": "Start time",
+          "description": "Controller-local clock time in HH:MM, without seconds. Required when creating."
+        },
+        "end": {
+          "name": "End time",
+          "description": "Controller-local HH:MM. Overnight entries can only be stored disabled until validated."
+        },
+        "weekday_codes": {
+          "name": "Weekday codes",
+          "description": "List of distinct protocol integers 0–6. Friday = 5 is confirmed; other individual mappings remain unverified."
+        },
+        "rpm": {
+          "name": "Schedule RPM",
+          "description": "Explicit whole-number RPM within the controller's limits. Zero/default-speed writes are unsupported."
+        },
+        "enabled": {
+          "name": "Enabled",
+          "description": "New schedules default to false. Enabling can cause equipment to run immediately if the interval is active."
+        }
+      }
+    },
+    "apply_native_schedule": {
+      "name": "Apply native schedule",
+      "description": "Apply a reviewed, single-use preview. Requires experimental writes enabled in options, Auto mode, and unchanged fresh schedule data. Never retries an uncertain write.",
+      "fields": {
+        "config_entry_id": {
+          "name": "TCX controller",
+          "description": "Select the TCX Direct integration entry."
+        },
+        "plan_id": {
+          "name": "Preview ID",
+          "description": "Single-use plan ID returned by Preview native schedule. Expires after five minutes."
+        }
+      }
+    },
+    "acknowledge_native_schedule_write": {
+      "name": "Acknowledge uncertain schedule write",
+      "description": "Clear the persistent write block only after reviewing the current schedules in iAquaLink. This does not retry, undo, or send any controller command.",
+      "fields": {
+        "config_entry_id": {
+          "name": "TCX controller",
+          "description": "Select the TCX Direct integration entry."
+        },
+        "plan_id": {
+          "name": "Preview ID",
+          "description": "Single-use plan ID returned by Preview native schedule. Expires after five minutes."
+        },
+        "revision": {
+          "name": "Reviewed revision",
+          "description": "Revision returned by Get native schedules after you have checked the uncertain result in iAquaLink."
+        }
+      }
     }
   },
   "config": {
@@ -48,6 +128,17 @@
     "abort": {
       "already_configured": "This AquaLink TCX is already configured.",
       "reauth_successful": "iAquaLink authentication was updated successfully."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Experimental native schedules",
+        "description": "Leave disabled for normal operation. Opting in permits explicitly previewed schedule writes, which can start equipment. No HA timetable is migrated, disabled, or uploaded automatically. Use only during supervised development testing.",
+        "data": {
+          "experimental_schedule_writes": "Allow experimental native schedule writes"
+        }
+      }
     }
   }
 }

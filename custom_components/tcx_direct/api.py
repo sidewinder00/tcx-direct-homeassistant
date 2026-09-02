@@ -45,6 +45,7 @@ from .const import (
     ZODIAC_API,
 )
 from .redaction import safe_structure_key, sanitize_diagnostics
+from .schedules import TCXSchedules
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -908,6 +909,7 @@ class TCXClient:
         self.last_post_prime_sync_error: str | None = None
         self.last_post_prime_sync_external_override_rpm: int | float | None = None
         self.last_post_prime_sync_external_override_at: str | None = None
+        self.schedules = TCXSchedules(self)
 
     def set_callbacks(
         self,
@@ -1132,6 +1134,7 @@ class TCXClient:
                 device_timestamp=_extract_device_timestamp(data),
             )
             _deep_merge(self.reported, reported)
+            self.schedules.observe(reported, full=True)
             return data
 
         self.shadow_supported = False
@@ -2241,6 +2244,9 @@ class TCXClient:
                         if reported is not None:
                             self.ws_reported_messages_received += 1
                             _deep_merge(self.reported, reported)
+                            self.schedules.observe(
+                                reported, full=data.get("service") == "Authorization"
+                            )
                             self._resolve_pending_control()
                             self.last_ws_reported_monotonic = now
                             self.last_ws_state_at = self.last_ws_message_at

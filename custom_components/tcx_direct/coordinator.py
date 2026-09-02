@@ -154,6 +154,7 @@ class TCXCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     def _build_data(self) -> dict[str, Any]:
         live_data = None if not self.normalized else not self.using_cached_data
+        schedules = self.client.schedules.snapshot()
         return {
             **self.normalized,
             "connected": self.client.healthy,
@@ -184,4 +185,9 @@ class TCXCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "last_control_failure_at": self.client.last_control_failure_at,
             "last_control_failure_command": (self.client.last_control_failure_description),
             "last_control_failure_error": self.client.last_control_failure_error,
+            "native_schedules": schedules["status"],
+            "native_schedule_count": len(schedules["schedules"])
+            if schedules["available"]
+            else None,
+            "native_schedule_data": schedules,
         }

@@ -1,5 +1,9 @@
 {
   "services": {
+    "get_native_schedules": {"service": "mdi:calendar-search"},
+    "preview_native_schedule": {"service": "mdi:calendar-edit"},
+    "apply_native_schedule": {"service": "mdi:calendar-check"},
+    "acknowledge_native_schedule_write": {"service": "mdi:calendar-alert"},
     "start_pump_at_speed": {
       "service": "mdi:pump"
     }

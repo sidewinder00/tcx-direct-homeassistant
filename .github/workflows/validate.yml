@@ -86,6 +86,20 @@ jobs:
           print(f"TCX Direct version {const_version} and English translations are consistent")
           PY
 
+  home-assistant-adapters:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+      - name: Install Home Assistant test runtime
+        run: python -m pip install --disable-pip-version-check homeassistant==2026.8.3 pytest PyYAML
+      - name: Test real Home Assistant adapters and protocol
+        run: pytest -q
+
   hassfest:
     runs-on: ubuntu-latest
     steps:
