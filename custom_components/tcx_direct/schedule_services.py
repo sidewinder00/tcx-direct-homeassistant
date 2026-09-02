@@ -23,9 +23,22 @@ def _integer_rpm(value):
     return int(value)
 
 
+def _boolean(value):
+    if type(value) is not bool:
+        raise vol.Invalid("enabled must be a boolean")
+    return value
+
+
+def _weekday(value):
+    if type(value) is not int or not 0 <= value <= 6:
+        raise vol.Invalid("weekday_codes must contain integers from 0 to 6")
+    return value
+
+
 _ENTRY = {vol.Required("config_entry_id"): cv.string}
+_SOURCE = {vol.Optional("source", default="rest"): vol.In(("rest", "websocket_authorization"))}
 _SCHEMAS = {
-    "get_native_schedules": vol.Schema(_ENTRY),
+    "get_native_schedules": vol.Schema({**_ENTRY, **_SOURCE}),
     "preview_native_schedule": vol.Schema(
         {
             **_ENTRY,
@@ -33,15 +46,16 @@ _SCHEMAS = {
             vol.Optional("schedule_id"): cv.string,
             vol.Optional("start"): cv.string,
             vol.Optional("end"): cv.string,
-            vol.Optional("weekday_codes"): [int],
+            vol.Optional("weekday_codes"): [_weekday],
             vol.Optional("rpm"): _integer_rpm,
-            vol.Optional("enabled"): cv.boolean,
+            vol.Optional("enabled"): _boolean,
         }
     ),
     "apply_native_schedule": vol.Schema({**_ENTRY, vol.Required("plan_id"): cv.string}),
     "acknowledge_native_schedule_write": vol.Schema(
         {
             **_ENTRY,
+            **_SOURCE,
             vol.Required("plan_id"): cv.string,
             vol.Required("revision"): cv.string,
         }
@@ -60,7 +74,7 @@ def async_register_schedule_services(hass: HomeAssistant) -> None:
         args = {key: value for key, value in call.data.items() if key != "config_entry_id"}
         try:
             if call.service == "get_native_schedules":
-                result = await manager.async_read()
+                result = await manager.async_read(**args)
             elif call.service == "preview_native_schedule":
                 result = await manager.async_preview(**args)
             elif call.service == "apply_native_schedule":

@@ -22,6 +22,13 @@ get_native_schedules:
       selector:
         config_entry:
           integration: tcx_direct
+    source:
+      default: rest
+      selector:
+        select:
+          options:
+            - rest
+            - websocket_authorization
 
 preview_native_schedule:
   fields:
@@ -96,3 +103,10 @@ acknowledge_native_schedule_write:
       required: true
       selector:
         text:
+    source:
+      default: rest
+      selector:
+        select:
+          options:
+            - rest
+            - websocket_authorization

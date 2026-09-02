@@ -18,6 +18,10 @@
         "config_entry_id": {
           "name": "TCX controller",
           "description": "Select the TCX Direct integration entry."
+        },
+        "source": {
+          "name": "Snapshot source",
+          "description": "REST is the default. WebSocket Authorization requests a new complete snapshot for recovery only, while an uncertain write is pending."
         }
       }
     },
@@ -75,19 +79,23 @@
     },
     "acknowledge_native_schedule_write": {
       "name": "Acknowledge uncertain schedule write",
-      "description": "Clear the persistent write block only after reviewing the current schedules in iAquaLink. This does not retry, undo, or send any controller command.",
+      "description": "Revalidate the reviewed schedule revision before clearing the write block. WebSocket recovery sends only a read-only subscription, never an equipment write. Subsequent writes still require REST.",
       "fields": {
         "config_entry_id": {
           "name": "TCX controller",
           "description": "Select the TCX Direct integration entry."
         },
         "plan_id": {
-          "name": "Preview ID",
-          "description": "Single-use plan ID returned by Preview native schedule. Expires after five minutes."
+          "name": "Pending operation ID",
+          "description": "plan_id from pending_write in Get native schedules. Recovery remains available after the original preview expires."
         },
         "revision": {
           "name": "Reviewed revision",
           "description": "Revision returned by Get native schedules after you have checked the uncertain result in iAquaLink."
+        },
+        "source": {
+          "name": "Snapshot source",
+          "description": "Use the same source as the reviewed read. A new snapshot is required again; no cached or unverified force-clear is permitted."
         }
       }
     }

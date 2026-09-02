@@ -25,9 +25,9 @@ TCX Direct connects Home Assistant directly to the iAquaLink/Zodiac cloud. It do
 
 ## Current version
 
-**v0.3.0**
+**v0.3.1**
 
-Published release: [v0.3.0](https://github.com/sidewinder00/tcx-direct-homeassistant/releases/tag/v0.3.0).
+Published release: [v0.3.1](https://github.com/sidewinder00/tcx-direct-homeassistant/releases/tag/v0.3.1).
 Native schedule management remains experimental and disabled by default.
 
 ### Experimental native schedules
@@ -37,6 +37,12 @@ write/recovery status as attributes. Native schedule editing is **off by default
 The new Get / Preview / Apply actions allow controlled testing of individually
 reviewed Pool Filtration schedule changes; they never migrate the HA timetable,
 execute a schedule from HA, or change existing automations automatically.
+
+Version 0.3.1 shares reported-equipment parsing with existing controls, verifies
+the schedule table in the specific REST response, and adds explicitly selected
+fresh WebSocket snapshot recovery for an uncertain write when REST is unavailable.
+Recovery records its source and revision; it does not replay a command or relax
+the REST requirement for subsequent writes.
 
 Use the [native schedule development guide](docs/NATIVE_SCHEDULES.md) for the
 preview/apply workflow, restrictions, uncertain-write recovery, and staged tests.
@@ -95,7 +101,7 @@ Pump Requested RPM reports `ecm0.reqSpd` independently from the active command. 
 
 Controller Mode is deliberately read-only and maps the observed values `1 = Auto`, `2 = Quick Clean`, `3 = Service`, `4 = Time Out`, and `5 = Transitioning`. Any other numeric value is retained as `Unknown (code N)`. Writable equipment entities become unavailable outside Auto, and a direct action or service call is rejected before transmission when any known or unknown non-Auto code is active. TCX Direct never forces the controller out of a local maintenance mode. Freeze Protection Setpoint exposes the reported `freezeSP` value without inferring an unconfirmed unit.
 
-Integration Version is an enabled diagnostic sensor that displays the installed semantic release, currently `0.3.0`, and remains available when TCX cloud data is unavailable. Its numeric `version_code` attribute uses `major × 1,000,000 + minor × 1,000 + patch`, so v0.2.11 is `2011` and v0.3.0 is `3000` without treating a semantic version as a decimal number.
+Integration Version is an enabled diagnostic sensor that displays the installed semantic release, currently `0.3.1`, and remains available when TCX cloud data is unavailable. Its numeric `version_code` attribute uses `major × 1,000,000 + minor × 1,000 + patch`, so v0.2.11 is `2011` and v0.3.1 is `3001` without treating a semantic version as a decimal number.
 
 The `tcx_direct.start_pump_at_speed` action targets the Pump Power switch and accepts an `rpm` value. It synchronizes the persistent Pool Filtration preset with a dedicated 45-second confirmation window and one fresh-shadow verification if the live confirmation is late. A stopped pump then receives only the normal `pool.st = 1` power command; no speed is combined with the start frame. TCX owns priming, after which TCX Direct aligns `manSpd` to the scheduled RPM as soon as the running motor leaves its distinct priming speed. This also corrects an older manual speed that TCX may restore at the end of priming. Waterfall, a stopped pump, an explicit TCX Direct manual-speed command, or a conflicting live `state.desired` manual-speed command from another client cancels that deferred alignment. The live command must target the dynamically discovered filtration-controller key; unrelated desired-state traffic and reported-only drift do not cancel it. For an already-running pump outside the priming transition, the action synchronizes both the Pool Filtration preset and manual speed immediately; a refresh during priming remains deferred until priming ends. The action never changes Spa Filtration or Waterfall presets.
 

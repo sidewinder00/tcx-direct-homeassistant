@@ -2,6 +2,29 @@
 
 All notable changes to Jandy TCX Direct are documented here.
 
+## [0.3.1] - 2026-09-02
+
+- Share normalized equipment enumeration and reported numeric parsing between
+  native schedules and existing controls. Preserve schedule uniqueness checks,
+  motor-first RPM limits with filtration-controller fallback, and strict action input.
+- Require the specific fresh REST response to contain the schedule table. A
+  concurrent REST or WebSocket update cannot make an incomplete response valid.
+- Add explicit `websocket_authorization` recovery reads and acknowledgements for
+  a pending uncertain write. Each requests a new read-only subscription snapshot
+  on the same connection; cached state, deltas, missing tables and timeouts cannot
+  clear the latch. Subsequent writes still require REST.
+- Persist the last acknowledgement's plan ID, time, source and reviewed revision
+  alongside the journal, retaining compatibility with existing pending operations.
+- Keep exact readback comparison and document why additional/normalized controller
+  fields can leave a successful write uncertain and require manual review.
+- Add regression coverage for normalization, uniqueness, snapshot provenance,
+  connection changes, recovery persistence, strict action inputs and HA adapters.
+- Keep experimental writes off by default and existing pump, Waterfall, SWG,
+  automation and dashboard behavior unchanged. No live equipment validation or
+  schedule migration is included.
+- Advance Integration Version to 0.3.1 and its generated numeric code to 3001.
+- Validate with 220 passing tests, including Home Assistant 2026.8.3 adapters.
+
 ## [0.3.0] - 2026-09-02
 
 - Add an enabled read-only Native Schedules diagnostic sensor and fresh-read,

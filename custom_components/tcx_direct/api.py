@@ -44,6 +44,16 @@ from .const import (
     WEBSOCKET_URL,
     ZODIAC_API,
 )
+from .protocol_helpers import (
+    _coerce_number,
+    _collect_reported,
+    _deep_merge,
+    _find_filter_controllers,
+    _find_pool_modes,
+    _norm,
+    _numeric_code,
+    _pump_speed_limits,
+)
 from .redaction import safe_structure_key, sanitize_diagnostics
 from .schedules import TCXSchedules
 
@@ -112,16 +122,6 @@ StateCallback = Callable[[dict[str, Any], str], Awaitable[None]]
 StatusCallback = Callable[[], Awaitable[None]]
 
 
-def _deep_merge(target: dict[str, Any], source: dict[str, Any]) -> dict[str, Any]:
-    """Recursively merge source into target and return target."""
-    for key, value in source.items():
-        if isinstance(value, dict) and isinstance(target.get(key), dict):
-            _deep_merge(target[key], value)
-        else:
-            target[key] = deepcopy(value)
-    return target
-
-
 def _extract_reported(data: Any) -> dict[str, Any] | None:
     """Find a state.reported dictionary inside Zodiac responses."""
     if not isinstance(data, dict):
@@ -142,32 +142,6 @@ def _extract_reported(data: Any) -> dict[str, Any] | None:
                 if result is not None:
                     return result
     return None
-
-
-def _collect_reported(data: Any) -> dict[str, Any] | None:
-    """Merge every state.reported dictionary found in a Zodiac message.
-
-    The TCX authorization snapshot contains several namespace documents
-    (main/ecm/filt/fea/...) in one payload. Returning only the first
-    state.reported block loses most of the controller state.
-    """
-    merged: dict[str, Any] = {}
-
-    def walk(value: Any) -> None:
-        if isinstance(value, dict):
-            state = value.get("state")
-            if isinstance(state, dict) and isinstance(state.get("reported"), dict):
-                _deep_merge(merged, state["reported"])
-            for child in value.values():
-                if isinstance(child, (dict, list)):
-                    walk(child)
-        elif isinstance(value, list):
-            for child in value:
-                if isinstance(child, (dict, list)):
-                    walk(child)
-
-    walk(data)
-    return merged or None
 
 
 def _extract_device_timestamp(data: Any) -> int | None:
@@ -194,10 +168,6 @@ def _extract_device_timestamp(data: Any) -> int | None:
     return None
 
 
-def _norm(text: str) -> str:
-    return "".join(ch for ch in text.casefold() if ch.isalnum())
-
-
 def _flatten(data: Any, prefix: tuple[str, ...] = ()) -> list[tuple[tuple[str, ...], Any]]:
     output: list[tuple[tuple[str, ...], Any]] = []
     if isinstance(data, dict):
@@ -213,20 +183,6 @@ def _flatten(data: Any, prefix: tuple[str, ...] = ()) -> list[tuple[tuple[str, .
     return output
 
 
-def _coerce_number(value: Any) -> float | None:
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, (int, float)):
-        return float(value)
-    if isinstance(value, str):
-        cleaned = value.strip().replace("%", "")
-        try:
-            return float(cleaned)
-        except ValueError:
-            return None
-    return None
-
-
 def _coerce_bool(value: Any) -> bool | None:
     if isinstance(value, bool):
         return value
@@ -239,14 +195,6 @@ def _coerce_bool(value: Any) -> bool | None:
         if val in {"off", "false", "0", "stopped", "disabled", "inactive"}:
             return False
     return None
-
-
-def _numeric_code(value: Any) -> int | float | None:
-    """Return a stable integer code when the reported number is integral."""
-    number = _coerce_number(value)
-    if number is None:
-        return None
-    return int(number) if number.is_integer() else number
 
 
 def _controller_mode_name(code: int | float | None) -> str | None:
@@ -467,30 +415,16 @@ def _find_pool_mode(
     reported: dict[str, Any],
 ) -> tuple[str, dict[str, Any]] | None:
     """Return the confirmed Pool Filtration mode object."""
-    for key, value in reported.items():
-        if not isinstance(value, dict):
-            continue
-        if _norm(str(value.get("et", ""))) != "vpos":
-            continue
-        if _norm(str(value.get("app", ""))) != "poolm":
-            continue
-        return str(key), value
-    return None
+    matches = _find_pool_modes(reported)
+    return matches[0] if matches else None
 
 
 def _find_filter_controller(
     reported: dict[str, Any],
 ) -> tuple[str, dict[str, Any]] | None:
     """Return the confirmed filtration-controller object."""
-    for key, value in reported.items():
-        if not isinstance(value, dict):
-            continue
-        if _norm(str(value.get("et", ""))) != "fctrl":
-            continue
-        if _norm(str(value.get("app", ""))) != "filt":
-            continue
-        return str(key), value
-    return None
+    matches = _find_filter_controllers(reported)
+    return matches[0] if matches else None
 
 
 def _find_pool_light(
@@ -1134,7 +1068,7 @@ class TCXClient:
                 device_timestamp=_extract_device_timestamp(data),
             )
             _deep_merge(self.reported, reported)
-            self.schedules.observe(reported, full=True)
+            self.schedules.observe(reported, full=True, source="rest")
             return data
 
         self.shadow_supported = False
@@ -1673,12 +1607,7 @@ class TCXClient:
                 "This TCX controller did not report a BD1_F Pool Filtration preset"
             )
 
-        minimum = _coerce_number(ecm0.get("minSpd"))
-        if minimum is None:
-            minimum = _coerce_number(controller_state.get("minSpd"))
-        maximum = _coerce_number(ecm0.get("maxSpd"))
-        if maximum is None:
-            maximum = _coerce_number(controller_state.get("maxSpd"))
+        minimum, maximum = _pump_speed_limits(self.reported, controller_state)
         if minimum is None or maximum is None:
             raise TCXControlUnsupported("The TCX controller did not report safe pump speed limits")
 
@@ -2245,7 +2174,12 @@ class TCXClient:
                             self.ws_reported_messages_received += 1
                             _deep_merge(self.reported, reported)
                             self.schedules.observe(
-                                reported, full=data.get("service") == "Authorization"
+                                reported,
+                                full=data.get("service") == "Authorization",
+                                source="websocket_authorization"
+                                if data.get("service") == "Authorization"
+                                else "websocket",
+                                websocket=self._ws,
                             )
                             self._resolve_pending_control()
                             self.last_ws_reported_monotonic = now
