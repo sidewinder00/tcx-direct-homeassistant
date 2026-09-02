@@ -6,6 +6,7 @@ plans are single-use, short-lived, tied to a freshly read table, and never repla
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import math
@@ -19,6 +20,16 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
+import aiohttp
+
+from .protocol_helpers import (
+    _coerce_number,
+    _collect_reported,
+    _find_filter_controllers,
+    _find_pool_modes,
+    _numeric_code,
+    _pump_speed_limits,
+)
 from .redaction import sanitize_diagnostics
 
 if TYPE_CHECKING:
@@ -27,6 +38,7 @@ if TYPE_CHECKING:
 PLAN_TTL = 300
 MAX_PLANS = 10
 SCHEDULE_TIMEOUT = 45
+WS_SNAPSHOT_TIMEOUT = 20
 OPERATIONS = ("create", "update", "enable", "disable", "delete")
 _SLOT = re.compile(r"[1-9][0-9]*\Z")
 _TIME = re.compile(r"(?:[01][0-9]|2[0-3]):[0-5][0-9]\Z")
@@ -74,6 +86,7 @@ def _days(value: Any) -> list[int]:
 
 
 def _rpm(value: Any, minimum: Any, maximum: Any) -> int:
+    minimum, maximum = _coerce_number(minimum), _coerce_number(maximum)
     if (
         type(value) is not int
         or type(minimum) not in (int, float)
@@ -158,11 +171,14 @@ class TCXSchedules:
         self._save: Callable[[dict[str, Any]], Awaitable[None]] | None = None
         self._plans: dict[str, SchedulePlan] = {}
         self._sequence = 0
-        self._full_sequence = 0
+        self._rest_sequence = 0
+        self._authorization_sequence = 0
+        self._snapshot_request: tuple[Any, asyncio.Future[dict[str, Any]]] | None = None
         self._slot_sequence: dict[str, int] = {}
         self.last_observed_at: str | None = None
         self.storage_error: str | None = None
         self._history: deque[dict[str, Any]] = deque(maxlen=20)
+        self.last_acknowledgement: dict[str, Any] | None = None
 
     def configure_storage(
         self, saved: Any, save: Callable[[dict[str, Any]], Awaitable[None]]
@@ -182,10 +198,36 @@ class TCXSchedules:
             )
         ):
             raise ScheduleError("Invalid schedule journal; refusing to discard recovery state")
+        acknowledgement = saved.get("last_acknowledgement") if saved else None
+        if acknowledgement is not None and (
+            not isinstance(acknowledgement, dict)
+            or acknowledgement.get("source") not in ("rest", "websocket_authorization")
+            or not isinstance(acknowledgement.get("revision"), str)
+            or not re.fullmatch(r"[0-9a-f]{64}", acknowledgement["revision"])
+            or not all(
+                isinstance(acknowledgement.get(key), str) and acknowledgement[key]
+                for key in ("plan_id", "at")
+            )
+        ):
+            raise ScheduleError("Invalid acknowledgement in schedule journal")
         self._save = save
         self.pending = deepcopy(saved.get("pending")) if saved else None
+        self.last_acknowledgement = deepcopy(acknowledgement)
 
-    def observe(self, reported: dict[str, Any], *, full: bool = False) -> None:
+    def _journal(self, pending: dict[str, Any] | None) -> dict[str, Any]:
+        result = {"pending": deepcopy(pending)}
+        if self.last_acknowledgement is not None:
+            result["last_acknowledgement"] = deepcopy(self.last_acknowledgement)
+        return result
+
+    def observe(
+        self,
+        reported: dict[str, Any],
+        *,
+        full: bool = False,
+        source: str = "websocket",
+        websocket: Any = None,
+    ) -> None:
         """Called only on newly received reported data, never on cache load or desired echoes."""
         if "sh" not in reported:
             return
@@ -196,12 +238,25 @@ class TCXSchedules:
             keys = set(table)
             if full:
                 keys |= set(self._slot_sequence)
-                self._full_sequence += 1
+                if source == "rest":
+                    self._rest_sequence += 1
+                elif source == "websocket_authorization":
+                    self._authorization_sequence += 1
                 # Full snapshots replace schedule membership. A generic recursive
                 # equipment merge would retain schedules absent after deletion.
                 self.client.reported["sh"] = deepcopy(table)
             for key in keys:
                 self._slot_sequence[key] = self._sequence
+            request = self._snapshot_request
+            if (
+                full
+                and source == "websocket_authorization"
+                and request is not None
+                and request[0] is websocket
+                and self.client._ws is websocket
+                and not request[1].done()
+            ):
+                request[1].set_result(deepcopy(table))
 
     def snapshot(self) -> dict[str, Any]:
         table = self.client.reported.get("sh")
@@ -222,6 +277,11 @@ class TCXSchedules:
             if self.writes_enabled
             else "read_only",
             "pending_write": sanitize_diagnostics(self.pending),
+            "last_acknowledgement": sanitize_diagnostics(self.last_acknowledgement),
+            "snapshot_counts": {
+                "rest": self._rest_sequence,
+                "websocket_authorization": self._authorization_sequence,
+            },
             "recent_operations": list(self._history),
         }
 
@@ -231,35 +291,77 @@ class TCXSchedules:
         )
 
     async def _fresh(self) -> dict[str, Any]:
-        previous = self._full_sequence
-        await self.client.async_get_shadow()
-        if self._full_sequence == previous:
+        response = await self.client.async_get_shadow()
+        reported = _collect_reported(response)
+        if reported is None or not isinstance(reported.get("sh"), dict):
             raise ScheduleError("Fresh REST shadow did not contain a complete schedule table")
-        table = self.client.reported.get("sh")
-        if not isinstance(table, dict):
-            raise ScheduleError("TCX did not report a schedule table")
+        table = deepcopy(reported["sh"])
         await self.client._notify_state("shadow")
-        return deepcopy(table)
+        if self.client.reported.get("sh") != table:
+            raise ScheduleError("Schedules changed while reading the REST snapshot; read again")
+        return table
 
-    async def async_read(self) -> dict[str, Any]:
+    async def _fresh_websocket(self) -> dict[str, Any]:
+        """Recovery only: request a new Authorization snapshot on this connection."""
+        if not self.pending:
+            raise ScheduleError("WebSocket snapshot recovery requires an uncertain write")
+        self._require_connection()
+        ws = self.client._ws
+        if not self.client.device_id or self.client.user_id is None:
+            raise ScheduleError("TCX identity is unavailable for snapshot recovery")
+        future = asyncio.get_running_loop().create_future()
+        request = (ws, future)
+        self._snapshot_request = request
+        try:
+            async with asyncio.timeout(WS_SNAPSHOT_TIMEOUT):
+                await self.client._send_authorization_subscribe(ws)
+                table = await future
+            self._require_connection()
+            if self.client._ws is not ws:
+                raise ScheduleError("TCX connection changed during snapshot recovery")
+            await self.client._notify_state("websocket")
+            self._require_connection()
+            if self.client._ws is not ws:
+                raise ScheduleError("TCX connection changed during snapshot recovery")
+            if self.client.reported.get("sh") != table:
+                raise ScheduleError("Schedules changed during snapshot recovery; read again")
+            return table
+        except TimeoutError as err:
+            raise ScheduleError(
+                "No new complete WebSocket Authorization schedule snapshot"
+            ) from err
+        except (aiohttp.ClientError, ConnectionError, RuntimeError) as err:
+            raise ScheduleError("Unable to obtain a WebSocket recovery snapshot") from err
+        finally:
+            if self._snapshot_request is request:
+                self._snapshot_request = None
+            if not future.done():
+                future.cancel()
+
+    async def _read_snapshot(self, source: str) -> dict[str, Any]:
+        if source == "rest":
+            return await self._fresh()
+        if source == "websocket_authorization":
+            return await self._fresh_websocket()
+        raise ScheduleError("Unknown schedule snapshot source")
+
+    async def async_read(self, source: str = "rest") -> dict[str, Any]:
         async with self.client._control_lock:
-            await self._fresh()
-            return self.snapshot()
+            table = await self._read_snapshot(source)
+            return {
+                **self.snapshot(),
+                "revision": schedule_revision(table),
+                "schedules": describe_schedules(table),
+                "snapshot_source": source,
+            }
 
     def _pool_context(self) -> tuple[str, dict[str, Any]]:
-        pools = [
-            key
-            for key, item in self.client.reported.items()
-            if isinstance(item, dict) and item.get("et") == "V_POS" and item.get("app") == "POOL_M"
-        ]
-        filters = [
-            item
-            for item in self.client.reported.values()
-            if isinstance(item, dict) and item.get("et") == "F_CTRL" and item.get("app") == "FILT"
-        ]
+        pools = _find_pool_modes(self.client.reported)
+        filters = _find_filter_controllers(self.client.reported)
         if len(pools) != 1 or len(filters) != 1:
             raise ScheduleError("A unique confirmed Pool Filtration controller is required")
-        return pools[0], filters[0]
+        minimum, maximum = _pump_speed_limits(self.client.reported, filters[0][1])
+        return pools[0][0], {"minSpd": minimum, "maxSpd": maximum}
 
     def _validate_entry(self, entry: dict[str, Any], limits: dict[str, Any]) -> None:
         _rpm(entry.get("ar"), limits.get("minSpd"), limits.get("maxSpd"))
@@ -367,11 +469,11 @@ class TCXSchedules:
             raise ScheduleError("An earlier write needs review; it will not be retried")
         if self._save is None:
             raise ScheduleError("Durable schedule journal is unavailable")
-        if (
-            type(self.client.reported.get("systemMode")) is not int
-            or self.client.reported["systemMode"] != 1
-        ):
+        if _numeric_code(self.client.reported.get("systemMode")) != 1:
             raise ScheduleError("A confirmed Auto controller mode is required")
+        self._require_connection()
+
+    def _require_connection(self) -> None:
         if (
             self.client._stopping
             or not self.client.websocket_connected
@@ -431,11 +533,10 @@ class TCXSchedules:
             try:
                 # Finish disk persistence before a frame can leave HA. Cancellation
                 # while saving is conservative: leave the latch, send nothing.
-                await self._save({"pending": deepcopy(self.pending)})
+                await self._save(self._journal(self.pending))
                 if (
                     not self.writes_enabled
-                    or type(self.client.reported.get("systemMode")) is not int
-                    or self.client.reported.get("systemMode") != 1
+                    or _numeric_code(self.client.reported.get("systemMode")) != 1
                 ):
                     raise ScheduleError("Write permission or controller mode changed")
                 if (
@@ -466,7 +567,7 @@ class TCXSchedules:
                     k: v for k, v in plan.before.items() if k != slot
                 }:
                     raise ScheduleError("Other schedules changed during the write; review required")
-                await self._save({"pending": None})
+                await self._save(self._journal(None))
                 self.pending = None
                 self._record("confirmed", plan_id, plan.operation)
                 return {"result": "confirmed", "schedule_id": slot, **self.snapshot()}
@@ -476,17 +577,26 @@ class TCXSchedules:
             finally:
                 await self.client._notify_status()
 
-    async def async_acknowledge(self, plan_id: str, revision: str) -> dict[str, Any]:
-        """Clear the latch only after explicit review; never send a controller command."""
+    async def async_acknowledge(
+        self, plan_id: str, revision: str, source: str = "rest"
+    ) -> dict[str, Any]:
+        """Revalidate a reviewed snapshot before clearing; never send an equipment write."""
         async with self.client._control_lock:
             if not self.pending or self.pending.get("plan_id") != plan_id:
                 raise ScheduleError("No matching uncertain write")
-            table = await self._fresh()
+            table = await self._read_snapshot(source)
             if schedule_revision(table) != revision:
                 raise ScheduleError("Schedules changed since review; read them again")
             if self._save is None:
                 raise ScheduleError("Durable schedule journal is unavailable")
-            await self._save({"pending": None})
+            acknowledgement = {
+                "at": _now(),
+                "plan_id": plan_id,
+                "source": source,
+                "revision": revision,
+            }
+            await self._save({"pending": None, "last_acknowledgement": acknowledgement})
+            self.last_acknowledgement = acknowledgement
             self.pending = None
             self._record("review_acknowledged", plan_id, "review")
             await self.client._notify_status()

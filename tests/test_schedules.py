@@ -63,7 +63,7 @@ class Rig:
 
     async def refresh(self):
         self.client.reported = deepcopy(self.remote)
-        self.manager.observe(self.remote, full=True)
+        self.manager.observe(self.remote, full=True, source="rest")
         return {"state": {"reported": deepcopy(self.remote)}}
 
     async def send_json(self, frame):
@@ -559,7 +559,8 @@ def test_real_rest_receive_hook_replaces_schedule_membership():
         result = await rig.manager.async_read()
         assert result["schedules"] == []
         assert rig.client.reported["sh"] == {}
-        assert rig.manager._full_sequence == 1
+        assert rig.manager._rest_sequence == 1
+        assert rig.manager._authorization_sequence == 0
 
     asyncio.run(run())
 

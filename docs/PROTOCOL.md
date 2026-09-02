@@ -4,7 +4,7 @@ This document records TCX cloud behavior that has been observed while developing
 
 The iAquaLink/TCX cloud protocol is unofficial and may change without notice.
 
-## Native schedule protocol (experimental v0.3.0)
+## Native schedule protocol (experimental v0.3.1)
 
 An official-app capture sequence established the following desired payloads and
 matching reported states for one Pool Filtration entry:
@@ -31,6 +31,20 @@ behavior, midnight rule, or runtime override priority is inferred from this capt
 The implementation uses the existing `tcx` write namespace and requires separate
 on-controller validation. It sends full individual entries for edits/toggles,
 preserving unknown fields, rather than assuming partial edits are accepted.
+
+From v0.3.1, schedule gates share normalized equipment matching and reported
+numeric parsing with pump control, but still require unique pool/filter objects.
+Fresh schedule reads validate `sh` in the specific returned REST response;
+transport observation counters are separate and cannot authorize a write.
+Pending uncertain writes can also be explicitly reviewed and acknowledged using
+a newly received complete `Authorization` schedule snapshot, requested through
+the existing read-only subscription on the same connection. Ordinary reported
+deltas and cached snapshots are insufficient. This verifies fresh receipt, not a
+vendor transaction ID or a confirmed request/response correlation token. The
+acknowledgement source and revision are persisted; subsequent writes still require
+REST. Exact schedule equality remains intentional: controller-added or normalized
+fields cause uncertainty, not automatic acceptance or retransmission.
+
 See [native schedule development guide](NATIVE_SCHEDULES.md) for safeguards,
 known limitations, actions, recovery, and the remaining hardware test gates.
 

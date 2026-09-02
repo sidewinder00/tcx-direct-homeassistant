@@ -1,4 +1,4 @@
-# Experimental native schedules — v0.3.0
+# Experimental native schedules — v0.3.1
 
 This is a development feature, not a migration or a replacement for the existing
 HA pump controller. Publishing this release does not install it in Home Assistant
@@ -10,9 +10,10 @@ behavior is unchanged. Native schedule writes remain disabled by default.
 - Reads schedules into the **Native Schedules** diagnostic sensor. Its state is
   `read_only`, `ready` (write option enabled), `needs_review`, `storage_error`, or
   `unknown`; `ready` does not assert equipment readiness or recent telemetry.
-- Exposes schedules, raw fields, revision, last observation, cache flag, and any
-  uncertain operation in attributes. Other equipment and unfamiliar formats stay
-  visible, not silently discarded. Default speed (`ar: 0`) is not shown as 0 RPM.
+- Exposes schedules, raw fields, revision, last observation, cache flag, any
+  uncertain operation, and the last acknowledgement in attributes. Other equipment
+  and unfamiliar formats stay visible, not silently discarded. Default speed
+  (`ar: 0`) is not shown as 0 RPM.
 - Provides four actions: `get_native_schedules`, `preview_native_schedule`,
   `apply_native_schedule`, and `acknowledge_native_schedule_write`.
 - Creates, updates, enables/disables and deletes **one Pool Filtration entry** at
@@ -30,10 +31,13 @@ has successfully written to a real controller.
    only for supervised testing. Changing this option does not reload the integration
    or affect equipment. User-initiated apply/recovery actions require an HA admin;
    HA's internal automation context is also accepted by its admin-service helper.
-2. Fresh reads require a successful **complete REST shadow containing `sh`**.
-   Cached state and a connected socket alone cannot authorize a write. If REST is
-   unavailable or rate-limited, fail closed. Normal equipment controls and passive
-   schedule observation still work over WebSocket.
+2. Default reads, previews and applies require a successful **complete REST shadow
+   containing `sh` in that specific response**. Concurrent updates cannot substitute
+   for missing data. An explicitly empty `sh: {}` is valid; missing or non-object
+   `sh` is not. Cached state and a connected socket alone cannot authorize a write.
+   If REST is unavailable or rate-limited, writes fail closed. An explicit
+   WebSocket recovery-only path is described below; normal equipment controls and
+   passive schedule observation still work over WebSocket.
 3. Preview IDs last five minutes, are entry-specific, are consumed once, and do
    not survive reload/restart. Applying re-reads the table and rejects any change
    since preview. It sends only the target `sh` entry, preserving unknown fields
@@ -41,6 +45,11 @@ has successfully written to a real controller.
 4. Explicit whole-number RPM must be within current reported pump limits. Writes
    using `ar: 0` are unsupported. Existing default-speed entries can still be read,
    disabled or deleted; updating/enabling them requires an explicit RPM first.
+   Reported numeric strings and equipment markers use the same normalization as
+   pump control. Limits prefer the motor, with per-field filter-controller fallback.
+   Exactly one matching pool and filter controller is required; normalization does
+   not relax that uniqueness check. Action inputs remain strict: booleans for
+   `enabled`, integer weekday codes, and whole-number RPM (no numeric strings).
 5. Fixed times use controller-local `HH:MM`. No UTC or HA-timezone conversion is
    applied. `weekday_codes` is a list of raw integers 0–6; only Friday = 5 has been
    individually matched to the app. All-days `[0,1,2,3,4,5,6]` was also captured.
@@ -57,13 +66,20 @@ has successfully written to a real controller.
    The latch survives restart; it is separate from delayed telemetry cache writes.
 9. Success requires a new matching reported update and then fresh shadow readback.
    A desired-state echo alone is not confirmation. If other entries change during
-   the operation, stop for review instead of overwriting them.
+   the operation, stop for review instead of overwriting them. Exact entry equality
+   is intentional: if TCX adds or normalizes fields, a write that actually succeeded
+   can still return `outcome_uncertain`. Inspect and acknowledge it; do not replay it.
 
 The revision is a **local fingerprint, not an atomic server compare-and-swap**.
 An external app can still race a command between reads; the vendor does not expose
 a confirmed transaction/idempotency mechanism here. Do not edit schedules from
 another client during apply. Never interpret a transport confirmation as proof
 that the motor physically ran at the scheduled speed.
+
+Explicit reads, previews, applies and acknowledgements share the equipment control
+lock, including their network waits. Do not poll these actions from an automation:
+they can delay a concurrent equipment command. The passive Native Schedules sensor
+uses existing received telemetry and does not issue extra requests.
 
 ## First supervised development workflow
 
@@ -130,22 +146,71 @@ Do not retry the add, restart to clear it, or delete the journal.
    is offline, wait; do not clear the block based only on cached data.
 3. After reviewing, use `acknowledge_native_schedule_write` with the pending
    `plan_id` and the current read's `revision`. This only clears the HA latch;
-   it does not retry, undo, or send a controller command.
+   it does not retry, undo, or send an equipment/schedule write. Acknowledgement
+   obtains another fresh snapshot and rejects a changed revision. The pending
+   operation ID remains valid for recovery even if its original preview expired.
 4. If a change is still needed, make a new preview against the current table.
    A failed call might have reached TCX; duplicate-looking entries need explicit
    inspection, not an automatic "cleanup" or recreation.
+
+The default acknowledgement source is REST, as for reads. If REST is unavailable
+but the current WebSocket is working, explicitly choose the recovery-only source
+on **both** calls:
+
+```yaml
+action: tcx_direct.get_native_schedules
+data:
+  config_entry_id: YOUR_CONFIG_ENTRY_ID
+  source: websocket_authorization
+response_variable: recovery_snapshot
+```
+
+Inspect that response and compare it with iAquaLink before acknowledging:
+
+```yaml
+action: tcx_direct.acknowledge_native_schedule_write
+data:
+  config_entry_id: YOUR_CONFIG_ENTRY_ID
+  plan_id: PENDING_OPERATION_ID
+  revision: REVIEWED_REVISION
+  source: websocket_authorization
+response_variable: recovery_result
+```
+
+This source is available only while an uncertain write is pending. Each call sends
+a read-only Authorization subscription and waits up to 20 seconds for a newly
+received complete Authorization snapshot containing `sh` on that same connection.
+Old cached snapshots, normal reported deltas, missing tables, connection changes,
+timeouts, and a changed revision cannot clear the latch. There is no force clear or
+automatic fallback. This is fresh-receipt verification, not a vendor transaction
+or request/response correlation guarantee. If neither source works, wait and keep
+the block in place. Clearing it through WebSocket **does not** let the next preview
+or write bypass REST.
+
+The durable journal keeps the pending operation's ID, operation, schedule ID, time,
+desired payload and state. After acknowledgement it also stores
+`last_acknowledgement` with `plan_id`, `at`, `source` and `revision`, exposed in the
+sensor/diagnostics. Existing v0.3.0 journals remain readable. The surrounding
+bounded operation history remains in memory and is lost on restart; the pending
+context and last acknowledgement are not.
 
 ## Validation status and next gates
 
 Implemented offline tests cover captured CRUD shapes, option gates, explicit RPM,
 raw weekday validation, disabled midnight entries, adjacent/overlapping blocks,
-freshness, field preservation, stale previews, duplicate/repeated apply, serialized
-operations, storage failure, cancellation, timeout/restart recovery, and HA adapters.
+freshness/provenance, normalized reported values and unique equipment matching,
+field preservation, stale previews, duplicate/repeated apply, serialized operations,
+storage failure, cancellation, timeout/restart recovery, connection replacement,
+exact readback mismatches, recovery audit persistence, and HA adapters.
 Synthetic fixtures contain no private diagnostic dumps or controller identifiers.
 
 Still required with the owner supervising:
 
 - Create two disabled entries from HA; edit one and verify the other is untouched.
+- Verify complete REST/Authorization responses with no schedules, including whether
+  a controller omits `sh` instead of returning an empty object; omission stays blocked.
+- Supervise the explicit WebSocket recovery path when REST is unavailable. Offline
+  tests establish safeguards, not live firmware support for a subscription refresh.
 - Verify remaining weekday mappings and the meaning of the default-speed sentinel.
 - Verify native create/edit/disable/delete against the app and controller, including
   capacity failures. Slot numbers observed in captures do not establish capacity.

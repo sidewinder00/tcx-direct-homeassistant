@@ -18,6 +18,7 @@ from homeassistant.core import Context, HomeAssistant  # noqa: E402
 from homeassistant.exceptions import ServiceValidationError, Unauthorized  # noqa: E402
 from homeassistant.helpers.selector import selector  # noqa: E402
 from homeassistant.helpers.storage import Store  # noqa: E402
+from test_schedule_robustness import recovery_rig  # noqa: E402
 from test_schedules import Rig  # noqa: E402
 
 from custom_components.tcx_direct.schedule_services import (  # noqa: E402
@@ -173,5 +174,86 @@ def test_options_flow_preserves_other_options_and_sensor_imports():
         await integration.async_update_options(None, config)
         assert not rig.manager.writes_enabled
         assert not rig.messages
+
+    asyncio.run(run())
+
+
+def test_real_storage_acknowledgement_survives_manager_recreation(tmp_path):
+    async def run():
+        hass = HomeAssistant(str(tmp_path))
+        store = Store(hass, 1, "tcx_direct.test_recovery")
+        rig = recovery_rig()
+        await store.async_save(rig.disk)
+        rig.manager.configure_storage(await store.async_load(), store.async_save)
+        readback = await rig.manager.async_read(source="websocket_authorization")
+        await rig.manager.async_acknowledge(
+            "test-pending", readback["revision"], source="websocket_authorization"
+        )
+        saved = await Store(hass, 1, "tcx_direct.test_recovery").async_load()
+        restarted = Rig()
+        restarted.manager.configure_storage(saved, store.async_save)
+        assert restarted.manager.pending is None
+        audit = restarted.manager.snapshot()["last_acknowledgement"]
+        assert audit["source"] == "websocket_authorization"
+        assert audit["revision"] == readback["revision"]
+        assert audit["plan_id"] == "test-pending"
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [{"enabled": "true"}, {"enabled": 1}, {"weekday_codes": [True]}, {"weekday_codes": ["5"]}],
+)
+def test_schedule_service_inputs_remain_strict(fields):
+    import voluptuous as vol
+
+    with pytest.raises(vol.Invalid):
+        _SCHEMAS["preview_native_schedule"](
+            {"config_entry_id": "test", "operation": "create", **fields}
+        )
+
+
+def test_ha_explicit_ws_recovery_and_admin_gate(tmp_path):
+    async def run():
+        hass = HomeAssistant(str(tmp_path))
+        rig = recovery_rig()
+        config = SimpleNamespace(
+            domain="tcx_direct",
+            state=ConfigEntryState.LOADED,
+            runtime_data=SimpleNamespace(client=rig.client),
+        )
+        hass.config_entries = SimpleNamespace(async_get_entry=lambda key: config)
+        async_register_schedule_services(hass)
+        readback = await hass.services.async_call(
+            "tcx_direct",
+            "get_native_schedules",
+            {"config_entry_id": "test", "source": "websocket_authorization"},
+            blocking=True,
+            return_response=True,
+        )
+        args = {
+            "config_entry_id": "test",
+            "source": "websocket_authorization",
+            "plan_id": "test-pending",
+            "revision": readback["revision"],
+        }
+        hass.auth = SimpleNamespace(
+            async_get_user=AsyncMock(return_value=SimpleNamespace(is_admin=False))
+        )
+        with pytest.raises(Unauthorized):
+            await hass.services.async_call(
+                "tcx_direct",
+                "acknowledge_native_schedule_write",
+                args,
+                blocking=True,
+                context=Context(user_id="non-admin"),
+            )
+        assert rig.disk["pending"] is not None and len(rig.messages) == 1
+        await hass.services.async_call(
+            "tcx_direct", "acknowledge_native_schedule_write", args, blocking=True
+        )
+        assert rig.disk["pending"] is None and len(rig.messages) == 2
+        assert rig.disk["last_acknowledgement"]["source"] == "websocket_authorization"
 
     asyncio.run(run())
