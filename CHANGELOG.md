@@ -2,6 +2,31 @@
 
 All notable changes to Jandy TCX Direct are documented here.
 
+## [0.3.2] - 2026-09-02
+
+- Correct the REST-only native schedule snapshot assumption exposed by the first
+  live empty-table read: Authorization supplied `sh: {}`, but successful REST reads
+  supplied no usable schedule table.
+- Default Get native schedules and acknowledgement to `websocket_authorization`,
+  with no pending-write prerequisite for reads. Preview, apply preflight and final
+  readback each request their own new complete Authorization snapshot.
+- Retain same-connection checks, bounded waits, exact table/revision comparisons,
+  opt-in/Auto gates, single-use previews and durable uncertainty before transmission.
+  Missing tables, cached state, desired echoes and ordinary deltas never substitute
+  for a complete snapshot; failed writes are never automatically replayed.
+- Pin apply to the connection that supplied preflight, including across journal
+  persistence and final readback; report snapshot provenance in preview/apply results
+  and new pending-operation journals.
+- Keep REST as an explicit alternate read/recovery source with request-specific
+  validation. Normal native schedule operations no longer require REST schedule data.
+- Add synthetic empty-table, disabled two-entry lifecycle, per-stage freshness,
+  connection-change, cancellation and real WebSocket receiver regressions.
+- Update action descriptions and the supervised testing/recovery guide. Keep native
+  writes disabled by default and existing equipment controls/HA automations unchanged.
+- Advance Integration Version to 0.3.2 and its generated numeric code to 3002.
+- Validate with 256 passing tests, including Home Assistant 2026.8.3 adapters.
+  Live subscription-refresh and native-write validation remain outstanding.
+
 ## [0.3.1] - 2026-09-02
 
 - Share normalized equipment enumeration and reported numeric parsing between

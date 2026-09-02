@@ -39,6 +39,7 @@ class Rig:
         self.client.reported = deepcopy(self.remote)
         self.disk = disk if disk is not None else {"pending": None}
         self.messages = []
+        self.subscriptions = []
         self.receive = True
         self.apply_remote = True
         self.mode_on_save = None
@@ -67,6 +68,9 @@ class Rig:
         return {"state": {"reported": deepcopy(self.remote)}}
 
     async def send_json(self, frame):
+        if frame.get("action") == "subscribe":
+            await self.subscribe(frame)
+            return
         assert self.disk["pending"] is not None  # durable BEFORE transmission
         self.messages.append(deepcopy(frame))
         desired = frame["payload"]["state"]["desired"]
@@ -82,6 +86,15 @@ class Rig:
             self.manager.observe(patch)
             self.client._resolve_pending_control()
 
+    async def subscribe(self, frame):
+        assert frame["service"] == "Authorization"
+        assert set(frame["payload"]) == {"userId"}  # no state/desired equipment command
+        self.subscriptions.append(deepcopy(frame))
+        self.client.reported = deepcopy(self.remote)
+        self.manager.observe(
+            self.remote, full=True, source="websocket_authorization", websocket=self
+        )
+
     async def create(self, **changes):
         return await self.manager.async_preview(
             "create", start="11:00", end="11:15", weekday_codes=[5], rpm=2650, **changes
@@ -91,6 +104,7 @@ class Rig:
 @pytest.fixture(autouse=True)
 def quick_timeouts(monkeypatch):
     monkeypatch.setattr(schedules, "SCHEDULE_TIMEOUT", 0.01)
+    monkeypatch.setattr(schedules, "WS_SNAPSHOT_TIMEOUT", 0.01)
 
 
 def test_captured_create_update_disable_delete_sequence():
@@ -326,6 +340,7 @@ def test_timeout_restart_and_manual_acknowledgement_never_replay(applied):
         assert not restarted.messages
         assert len(rig.messages) == 1
         assert restarted.disk["pending"] is None
+        assert restarted.disk["last_acknowledgement"]["source"] == "websocket_authorization"
 
     asyncio.run(run())
 
@@ -349,11 +364,13 @@ def test_no_stale_cache_or_desired_echo_confirmation():
     async def run():
         rig = Rig()
 
-        async def cached_only():
-            return {"state": {"reported": {"ecm0": {"st": 0}}}}
+        async def cached_only(frame):
+            rig.manager.observe(
+                {"ecm0": {"st": 0}}, full=True, source="websocket_authorization", websocket=rig
+            )
 
-        rig.client.async_get_shadow = cached_only
-        with pytest.raises(ScheduleError, match="complete schedule table"):
+        rig.subscribe = cached_only
+        with pytest.raises(ScheduleError, match="No new complete"):
             await rig.create()
         assert not rig.messages
         plan = schedules.SchedulePlan("x", "update", "1", {}, entry(), 0)
@@ -441,6 +458,8 @@ def test_disconnect_or_cancellation_after_transmission_keeps_latch(disconnect):
         plan = await rig.create()
 
         async def interrupted_send(frame):
+            if frame.get("action") == "subscribe":
+                return await rig.subscribe(frame)
             rig.messages.append(frame)
             if disconnect:
                 raise ConnectionError("connection lost after send")
@@ -463,7 +482,8 @@ def test_concurrent_unrelated_edit_after_send_is_not_rolled_back():
 
         async def concurrent_edit(frame):
             await send(frame)
-            rig.remote["sh"]["2"]["en"] = 0
+            if frame.get("action") != "subscribe":
+                rig.remote["sh"]["2"]["en"] = 0
 
         rig.send_json = concurrent_edit
         with pytest.raises(ScheduleError, match="Other schedules changed"):
@@ -483,7 +503,8 @@ def test_target_readback_mismatch_blocks_further_writes():
 
         async def inconsistent_readback(frame):
             await send(frame)
-            rig.remote["sh"]["1"]["ar"] = 2750
+            if frame.get("action") != "subscribe":
+                rig.remote["sh"]["1"]["ar"] = 2750
 
         rig.send_json = inconsistent_readback
         with pytest.raises(ScheduleError, match="readback"):
@@ -556,7 +577,7 @@ def test_real_rest_receive_hook_replaces_schedule_membership():
 
         rig.client.async_ensure_auth = auth
         rig.client.async_get_shadow = lambda: api.TCXClient.async_get_shadow(rig.client)
-        result = await rig.manager.async_read()
+        result = await rig.manager.async_read(source="rest")
         assert result["schedules"] == []
         assert rig.client.reported["sh"] == {}
         assert rig.manager._rest_sequence == 1

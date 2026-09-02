@@ -18,7 +18,7 @@ def encode_version_code(version: str) -> int:
     return major * 1_000_000 + minor * 1_000 + patch
 
 
-VERSION = "0.3.1"
+VERSION = "0.3.2"
 VERSION_CODE = encode_version_code(VERSION)
 
 ATTR_RPM = "rpm"
