@@ -1124,7 +1124,7 @@ def test_cold_start_aligns_manual_speed_only_after_priming(monkeypatch) -> None:
     desired_frames = [message["payload"]["state"]["desired"] for message in websocket.messages]
     assert desired_frames[-1] == {"filt0": {"manSpd": 2575}}
     assert client.post_prime_sync_success_count == 1
-    assert client.last_post_prime_sync_result == "manual_speed_aligned"
+    assert client.last_post_prime_sync_result == "motor_speed_confirmed"
 
 
 def test_cold_start_replaces_controller_restored_stale_manual_speed(monkeypatch) -> None:
@@ -1169,6 +1169,7 @@ def test_cold_start_replaces_controller_restored_stale_manual_speed(monkeypatch)
                 client.reported["ecm0"].update({"st": 1, "reqSpd": 2600, "cmdSpd": 2500})
             if "filt0" in desired:
                 client.reported["filt0"]["manSpd"] = desired["filt0"]["manSpd"]
+                client.reported["ecm0"].update(reqSpd=2600, cmdSpd=2600)
             client._resolve_pending_control()
 
     websocket = FakeWebSocket()
@@ -1207,7 +1208,7 @@ def test_cold_start_replaces_controller_restored_stale_manual_speed(monkeypatch)
     ]
     assert client.post_prime_sync_success_count == 1
     assert client.post_prime_sync_skip_count == 0
-    assert client.last_post_prime_sync_result == "manual_speed_aligned"
+    assert client.last_post_prime_sync_result == "motor_speed_confirmed"
 
 
 def test_live_external_manual_speed_desired_cancels_matching_generation() -> None:

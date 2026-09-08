@@ -1,6 +1,6 @@
-# Experimental native schedules — v0.3.4
+# Experimental native schedules — v0.3.5
 
-Version 0.3.4 changes shared REST pacing, not native schedule write or confirmation
+Version 0.3.5 expands passive schedule diagnostics, not native schedule write or confirmation
 behavior. Explicit REST reads now respect the same cooldown as other callers;
 native schedule testing remains paused.
 
@@ -146,3 +146,18 @@ safety controls independent.
 
 No migration, controller reboot, live test, recovery action or installation is
 requested by this documentation.
+
+### Trace schema 2 additions (v0.3.5)
+
+Parent-container types distinguish missing, null, object and malformed containers.
+Explicit schedule deltas and schedule fields in unexpected document locations are
+retained with existing redaction and bounds. REST and Authorization snapshots
+remain retained even without explicit schedule fields.
+
+`unretained_malformed_message_count` and
+`last_unretained_malformed_message_at` count and timestamp malformed WebSocket
+messages with no explicit schedule field that were filtered from event history.
+No payload is retained for these messages. Ordinary equipment messages are not
+counted. These fields reset with the client session and do not prove that schedule
+evidence was invalidated. They do not include capture failures or event eviction.
+No new cloud requests, write guards, recovery logic or journal changes are included.
