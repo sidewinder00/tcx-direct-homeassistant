@@ -18,7 +18,7 @@ def encode_version_code(version: str) -> int:
     return major * 1_000_000 + minor * 1_000 + patch
 
 
-VERSION = "0.3.4"
+VERSION = "0.3.5"
 VERSION_CODE = encode_version_code(VERSION)
 
 ATTR_RPM = "rpm"
@@ -88,3 +88,6 @@ POST_PRIME_SYNC_INTERVAL = 5
 POST_PRIME_SYNC_TIMEOUT = 300
 PUMP_ZERO_GRACE_SECONDS = 90
 CACHE_VERSION = 1
+
+# Post-prime execution observation after the single setpoint attempt; no REST reads.
+POST_PRIME_MOTOR_CONFIRM_TIMEOUT = 45

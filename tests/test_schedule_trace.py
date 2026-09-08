@@ -418,3 +418,61 @@ def test_real_socket_records_raw_authorization_and_each_late_report_with_writes_
             await asyncio.gather(supervisor, return_exceptions=True)
 
     asyncio.run(run())
+
+
+@pytest.mark.parametrize("field,value", [("state", None), ("state", []), ("metadata", 2)])
+def test_filtered_malformed_messages_have_tally_without_payload_or_eviction(field, value):
+    trace = NativeScheduleTrace()
+    trace.received({"state": {"desired": {"sh": {"add": None}}}}, source="websocket")
+    before = trace.snapshot()
+    for _ in range(TRACE_EVENTS + 1):
+        trace.received({"service": "StateStreamer", "payload": {field: value}}, source="websocket")
+    result = trace.snapshot()
+    assert result["events"] == before["events"]
+    assert result["total_events"] == before["total_events"]
+    assert result["unretained_malformed_message_count"] == TRACE_EVENTS + 1
+    assert result["last_unretained_malformed_message_at"]
+    assert NativeScheduleTrace().snapshot()["unretained_malformed_message_count"] == 0
+    assert NativeScheduleTrace().snapshot()["last_unretained_malformed_message_at"] is None
+
+
+def test_null_desired_equipment_message_is_counted_but_normal_telemetry_is_not():
+    trace = NativeScheduleTrace()
+    packet = {
+        "service": "StateStreamer",
+        "payload": {"state": {"reported": {"ecm0": {"cmdSpd": 1800}}}},
+    }
+    trace.received(packet, source="websocket")
+    assert trace.snapshot()["unretained_malformed_message_count"] == 0
+    packet["payload"]["state"]["desired"] = None
+    trace.received(packet, source="websocket")
+    assert trace.snapshot()["unretained_malformed_message_count"] == 1
+    assert trace.snapshot()["events"] == []
+
+
+@pytest.mark.parametrize("source,service", [("rest", "other"), ("websocket", "Authorization")])
+def test_retained_malformed_snapshots_do_not_increment_filtered_tally(source, service):
+    trace = NativeScheduleTrace()
+    trace.received({"service": service, "state": {"desired": None}}, source=source)
+    result = trace.snapshot()
+    assert result["total_events"] == 1
+    assert result["unretained_malformed_message_count"] == 0
+    assert result["events"][0]["documents"]["root"]["containers"]["state.desired"] == "null"
+
+
+@pytest.mark.parametrize("value", [None, {}, [], {"add": None}])
+@pytest.mark.parametrize("namespace", ["main", "sched", "ecm", "unknown-private-name"])
+def test_delta_in_each_document_is_traced_without_arbitrary_namespace_names(namespace, value):
+    trace = NativeScheduleTrace()
+    trace.received(
+        {"payload": {namespace: {"state": {"delta": {"sh": value}}}}}, source="websocket"
+    )
+    result = trace.snapshot()
+    assert result["schema_version"] == 2
+    assert result["total_events"] == 1
+    assert any(
+        doc["delta_sh"]["presence"] != "missing"
+        for doc in result["events"][0]["documents"].values()
+    )
+    assert "unknown-private-name" not in json.dumps(result)
+    assert result["unretained_malformed_message_count"] == 0

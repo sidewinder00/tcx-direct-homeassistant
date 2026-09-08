@@ -10,6 +10,7 @@ from . import TCXConfigEntry
 from .const import (
     CONTROL_CONFIRM_TIMEOUT,
     POOL_FILTRATION_CONFIRM_TIMEOUT,
+    POST_PRIME_MOTOR_CONFIRM_TIMEOUT,
     POST_PRIME_SYNC_INTERVAL,
     POST_PRIME_SYNC_TIMEOUT,
     PUMP_POWER_CONFIRM_TIMEOUT,
@@ -152,6 +153,7 @@ async def async_get_config_entry_diagnostics(
         "post_prime_sync": {
             "interval_seconds": POST_PRIME_SYNC_INTERVAL,
             "timeout_seconds": POST_PRIME_SYNC_TIMEOUT,
+            "motor_confirmation_timeout_seconds": POST_PRIME_MOTOR_CONFIRM_TIMEOUT,
             "state": client.post_prime_sync_state,
             "target_rpm": client.post_prime_sync_target,
             "generation": client.post_prime_sync_generation,

@@ -30,6 +30,7 @@ from .const import (
     LIGHT_COLOR_BY_CODE,
     MAX_WEBSOCKET_SESSION,
     POOL_FILTRATION_CONFIRM_TIMEOUT,
+    POST_PRIME_MOTOR_CONFIRM_TIMEOUT,
     POST_PRIME_SYNC_INTERVAL,
     POST_PRIME_SYNC_TIMEOUT,
     PUMP_POWER_CONFIRM_TIMEOUT,
@@ -1381,6 +1382,8 @@ class TCXClient:
         """Align manSpd once TCX has left priming and reached Pool Filtration."""
         requested = context.target_rpm
         deadline = time.monotonic() + POST_PRIME_SYNC_TIMEOUT
+        alignment_attempted = False
+        alignment_socket = None
         try:
             while time.monotonic() < deadline:
                 sleep_task = asyncio.create_task(asyncio.sleep(POST_PRIME_SYNC_INTERVAL))
@@ -1418,6 +1421,31 @@ class TCXClient:
                     self.post_prime_sync_skip_count += 1
                     self._finish_post_prime_sync("skipped", "waterfall_active")
                     return
+
+                mode = _numeric_code(self.reported.get("systemMode"))
+                if mode is not None and mode != CONTROLLER_MODE_AUTO:
+                    self._finish_post_prime_sync("skipped", "controller_not_auto")
+                    self.post_prime_sync_skip_count += 1
+                    self._record_post_prime_transition(context, "controller_not_auto")
+                    return
+
+                if alignment_attempted:
+                    if (
+                        not self.websocket_connected
+                        or self._ws is not alignment_socket
+                        or alignment_socket.closed
+                    ):
+                        self._finish_post_prime_sync(
+                            "failed", "connection_changed_before_motor_confirmation"
+                        )
+                        return
+                    if self._post_prime_speed_matches(context):
+                        self.post_prime_sync_success_count += 1
+                        self._record_post_prime_transition(context, "motor_speed_confirmed")
+                        self._finish_post_prime_sync("complete", "motor_speed_confirmed")
+                        return
+                    self._record_post_prime_transition(context, "waiting_for_motor_speed")
+                    continue
 
                 controller_state = _mapping(self.reported.get(context.filter_key))
                 if (
@@ -1478,16 +1506,28 @@ class TCXClient:
                     ):
                         self._record_post_prime_transition(context, "readiness_changed")
                         continue
+                    controller = _find_filter_controller(self.reported)
+                    if controller is None or controller[0] != context.filter_key:
+                        self.post_prime_sync_skip_count += 1
+                        self._finish_post_prime_sync("skipped", "filter_controller_changed")
+                        self._record_post_prime_transition(context, "filter_controller_changed")
+                        return
                     self._record_post_prime_transition(context, "writing_manual_speed")
-                    await self._async_set_pump_speed_locked(requested)
+                    # Only this owned post-prime operation may reassert an equal
+                    # setpoint when the motor disagrees. Never retry the send.
+                    alignment_socket = self._ws
+                    await self._async_set_pump_speed_locked(
+                        requested, force_write=not self._post_prime_speed_matches(context)
+                    )
+                    alignment_attempted = True
+                    deadline = min(deadline, time.monotonic() + POST_PRIME_MOTOR_CONFIRM_TIMEOUT)
 
                 if context.override_event.is_set():
                     self._finish_external_post_prime_override(context)
                     return
-                self.post_prime_sync_success_count += 1
-                self._record_post_prime_transition(context, "manual_speed_aligned")
-                self._finish_post_prime_sync("complete", "manual_speed_aligned")
-                return
+                # A setpoint acknowledgement is not motor execution. Observe
+                # subsequent state without holding the control lock or polling REST.
+                continue
         except asyncio.CancelledError:
             raise
         except TCXError as err:
@@ -1500,9 +1540,29 @@ class TCXClient:
             self._finish_post_prime_sync("failed", "unexpected_error", str(err))
             return
 
+        finally:
+            await self._notify_status()
+
         self.post_prime_sync_timeout_count += 1
         self._record_post_prime_transition(context, "timed_out")
-        self._finish_post_prime_sync("timed_out", "scheduled_speed_not_observed")
+        self._finish_post_prime_sync(
+            "timed_out",
+            "motor_speed_not_confirmed" if alignment_attempted else "scheduled_speed_not_observed",
+        )
+        await self._notify_status()
+
+    def _post_prime_speed_matches(self, context: _PostPrimeSyncContext) -> bool:
+        controller = _find_filter_controller(self.reported)
+        motor = _mapping(self.reported.get("ecm0"))
+        return (
+            controller is not None
+            and controller[0] == context.filter_key
+            and _coerce_bool(motor.get("st")) is True
+            and all(
+                (number := _coerce_number(value)) is not None and number == context.target_rpm
+                for value in (controller[1].get("manSpd"), motor.get("reqSpd"), motor.get("cmdSpd"))
+            )
+        )
 
     async def async_set_waterfall(self, enabled: bool) -> None:
         """Set the captured TCX waterfall feature and await reported state."""
@@ -1764,6 +1824,7 @@ class TCXClient:
         speed: float,
         *,
         description: str = "pump speed",
+        force_write: bool = False,
     ) -> None:
         """Set manual speed while the caller holds the serialized control lock."""
         controller = _find_filter_controller(self.reported)
@@ -1788,7 +1849,7 @@ class TCXClient:
                 f"Pump speed must be between {minimum:.0f} and {maximum:.0f} RPM"
             )
         current = _coerce_number(controller_state.get("manSpd"))
-        if current is not None and round(current) == requested:
+        if not force_write and current is not None and round(current) == requested:
             return
         await self._async_send_control(
             {controller_key: {"manSpd": requested}},

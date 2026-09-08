@@ -11,6 +11,11 @@ from functools import wraps
 from typing import Any
 
 from .redaction import REDACTED, SENSITIVE_NORMALIZED_KEYS, normalize_key, safe_structure_key
+from .schedule_trace_helpers import (
+    document_containers,
+    has_malformed_schedule_containers,
+    has_schedule_fields,
+)
 
 TRACE_EVENTS = 20
 TRACE_CHANGES = 20
@@ -137,8 +142,21 @@ def _section(document: Any) -> dict[str, Any]:
         else "null"
         if document is None
         else "invalid",
+        "containers": {
+            "state": _presence(doc.get("state", _MISSING)),
+            "metadata": _presence(doc.get("metadata", _MISSING)),
+            **{
+                f"state.{kind}": _presence(state.get(kind, _MISSING))
+                for kind in ("desired", "reported", "delta")
+            },
+            **{
+                f"metadata.{kind}": _presence(metadata.get(kind, _MISSING))
+                for kind in ("desired", "reported")
+            },
+        },
         "desired_sh": _fragment(_mapping(state.get("desired")).get("sh", _MISSING)),
         "reported_sh": _fragment(_mapping(state.get("reported")).get("sh", _MISSING)),
+        "delta_sh": _fragment(_mapping(state.get("delta")).get("sh", _MISSING)),
         "desired_sh_metadata": _fragment(_mapping(metadata.get("desired")).get("sh", _MISSING)),
         "reported_sh_metadata": _fragment(_mapping(metadata.get("reported")).get("sh", _MISSING)),
         "shadow_version": _fragment(doc.get("version", _MISSING)),
@@ -147,11 +165,25 @@ def _section(document: Any) -> dict[str, Any]:
     }
 
 
+def _presence(value: Any) -> str:
+    return (
+        "missing"
+        if value is _MISSING
+        else "null"
+        if value is None
+        else "object"
+        if isinstance(value, dict)
+        else "invalid"
+    )
+
+
 class NativeScheduleTrace:
     """Own no client/transport handles; retain redacted copies in memory only."""
 
     def __init__(self):
         self.capture_errors = 0
+        self.unretained_malformed_message_count = 0
+        self.last_unretained_malformed_message_at: str | None = None
         self._sequence = 0
         self._events: deque[dict] = deque(maxlen=TRACE_EVENTS)
         self._changes: deque[dict] = deque(maxlen=TRACE_CHANGES)
@@ -180,15 +212,41 @@ class NativeScheduleTrace:
         documents = {"root": data, "payload": root.get("payload", _MISSING)}
         # Keep namespace identity even if only metadata (or no sh at all) is present.
         for container_name, container in (("root", root), ("payload", payload)):
-            for namespace in ("main", "sched"):
-                documents[f"{container_name}.{namespace}"] = container.get(namespace, _MISSING)
-        relevant = any(
-            "sh" in _mapping(_mapping(_mapping(doc).get(group)).get(side))
-            for doc in documents.values()
-            for group in ("state", "metadata")
-            for side in ("desired", "reported")
-        )
+            for namespace in (
+                "main",
+                "sched",
+                "data",
+                "ecm",
+                "fea",
+                "filt",
+                "ota",
+                "pib0",
+                "scene",
+                "zig",
+            ):
+                if namespace in ("main", "sched") or namespace in container:
+                    documents[f"{container_name}.{namespace}"] = container.get(namespace, _MISSING)
+        other_count = 0
+        omitted = False
+        for path, document in document_containers(data):
+            if path in documents:
+                continue
+            if other_count >= MAX_ITEMS:
+                omitted = True
+                break
+            # Preserve known namespace identity, but never retain arbitrary keys.
+            prefix, name = path.split(".", 1)
+            if name in ("data", "ecm", "fea", "filt", "ota", "pib0", "scene", "zig"):
+                label = path
+            else:
+                label = f"{prefix}.other_{other_count}"
+            documents[label] = document
+            other_count += 1
+        relevant = has_schedule_fields(data)
         if source != "rest" and root.get("service") != "Authorization" and not relevant:
+            if source == "websocket" and has_malformed_schedule_containers(data):
+                self.unretained_malformed_message_count += 1
+                self.last_unretained_malformed_message_at = datetime.now(timezone.utc).isoformat()
             return  # ordinary pump/temperature traffic must not crowd out schedule evidence
         event = self._record(
             "received",
@@ -204,6 +262,7 @@ class NativeScheduleTrace:
             if root.get("namespace") in ("authorization", "main", "sched", "tcx")
             else "other_or_absent",
             documents={name: _section(value) for name, value in documents.items()},
+            documents_truncated=omitted,
         )
         if root.get("service") == "Authorization":
             self._last_authorization = deepcopy(event)
@@ -230,8 +289,16 @@ class NativeScheduleTrace:
             self._last_schedule_send = deepcopy(event)
 
     @_passive
-    def operation(self, state: str, plan_id: str, operation: str) -> None:
-        event = self._record("operation", state=state, plan_id=plan_id, operation=operation)
+    def operation(
+        self, state: str, plan_id: str, operation: str, review: dict | None = None
+    ) -> None:
+        event = self._record(
+            "operation",
+            state=state,
+            plan_id=plan_id,
+            operation=operation,
+            **({"review": _fragment(review)} if review is not None else {}),
+        )
         if state == "confirmed":
             self._last_confirmed = deepcopy(event)
 
@@ -274,9 +341,11 @@ class NativeScheduleTrace:
     def snapshot(self) -> dict[str, Any]:
         return deepcopy(
             {
-                "schema_version": 1,
+                "schema_version": 2,
                 "scope": "current_client_session_only",
                 "capture_errors": self.capture_errors,
+                "unretained_malformed_message_count": self.unretained_malformed_message_count,
+                "last_unretained_malformed_message_at": self.last_unretained_malformed_message_at,
                 "limits": {
                     "events": TRACE_EVENTS,
                     "reported_changes": TRACE_CHANGES,

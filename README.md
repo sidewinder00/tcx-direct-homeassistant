@@ -25,7 +25,7 @@ TCX Direct connects Home Assistant directly to the iAquaLink/Zodiac cloud. It do
 
 ## Current version
 
-**v0.3.4**
+**v0.3.5**
 
 Release notes and downloads: [GitHub Releases](https://github.com/sidewinder00/tcx-direct-homeassistant/releases).
 Native schedule management remains experimental and disabled by default.
@@ -53,7 +53,10 @@ Later owner testing and diagnostics showed that ordinary controls had recovered
 and the observed schedule table was empty. That is a recovery baseline, not a fix
 or validation of the schedule transaction.
 
-Version 0.3.3 adds a bounded, redacted passive trace to diagnostic downloads.
+Version 0.3.5 expands the bounded, redacted passive trace with container types,
+schedule deltas, unexpected document locations, and a count/timestamp for malformed
+WebSocket messages omitted from the event history. These are observations only;
+they do not change schedule write guards or recovery behavior.
 Downloading diagnostics uses existing observations; it does not request another
 snapshot or send equipment commands. See the [native schedule status and safety
 guide](docs/NATIVE_SCHEDULES.md) for restrictions, uncertainty handling and
@@ -136,7 +139,7 @@ transmission. The integration never forces a controller out of maintenance mode.
 Freeze Protection Setpoint remains read-only and has no unit until its unit
 behavior is independently established.
 
-Integration Version is an enabled diagnostic sensor that displays the installed semantic release, currently `0.3.4`, and remains available when TCX cloud data is unavailable. Its numeric `version_code` attribute uses `major × 1,000,000 + minor × 1,000 + patch`, so v0.2.11 is `2011` and v0.3.4 is `3004` without treating a semantic version as a decimal number.
+Integration Version is an enabled diagnostic sensor that displays the installed semantic release, currently `0.3.5`, and remains available when TCX cloud data is unavailable. Its numeric `version_code` attribute uses `major × 1,000,000 + minor × 1,000 + patch`, so v0.2.11 is `2011` and v0.3.5 is `3005` without treating a semantic version as a decimal number.
 
 The `tcx_direct.start_pump_at_speed` action targets the Pump Power switch and accepts
 an `rpm` value. It confirms the persistent filtration preset before starting a
@@ -158,6 +161,23 @@ Equipment air temperature is disabled by default and requires a recognized live
 reading; unexplained values are not interpreted as temperatures. Native salt-water
 chlorinator level remains disabled by default until supported equipment is
 identified.
+
+### Post-prime speed correction in v0.3.5
+
+Version 0.3.5 corrects the captured case where the filtration manual
+setpoint already matches the scheduled target but the motor runs at a different
+speed after priming. That owned startup operation may send one corrective manual
+speed write, then observe reported state for up to 45 seconds (within the overall
+startup deadline). It reports `motor_speed_confirmed` only when the filtration
+setpoint and motor requested/commanded speeds agree. Otherwise it reports
+`motor_speed_not_confirmed`; it never resends automatically or polls REST to chase
+confirmation. The equipment-control lock is released during motor observation.
+
+Explicit overrides and replacement startups still cancel the worker. Pump-off,
+Waterfall, controller-mode changes and connection replacement prevent completion
+of the old target. Ordinary manual-speed actions retain their existing setpoint
+confirmation behavior. This fix does not establish the cause of the separate
+Waterfall/schedule interaction, and has not yet been validated on equipment.
 
 ## Reliability design
 

@@ -2,6 +2,35 @@
 
 All notable changes to Jandy TCX Direct are documented here.
 
+## [0.3.5] - 2026-09-08
+
+### Post-prime speed correction
+
+- Correct false startup alignment success when the filtration setpoint matches the
+  target but the motor restores a different speed. Allow one corrective write in
+  the owned startup operation, then require matching filtration setpoint and motor
+  requested/commanded RPM before recording `motor_speed_confirmed`.
+- Observe motor state for up to 45 seconds within the overall startup deadline,
+  releasing the control lock while waiting. Honor overrides and report timeout
+  without automatic retries or extra REST reads.
+- Expose the motor confirmation window in diagnostics. Ordinary manual-speed
+  confirmation and Waterfall priority behavior are unchanged. Equipment validation
+  is still needed; this does not resolve the separate Waterfall/schedule interaction.
+
+### Passive schedule diagnostics
+
+- Expand trace schema to version 2 with parent-container presence/types, schedule
+  deltas and redacted unexpected document locations.
+- Count unretained malformed WebSocket messages and record their last timestamp
+  without retaining payloads or evicting schedule events. These session-only
+  observations are not proof that an operation was invalidated.
+- Preserve v0.3.4 schedule services, write guards, storage and lifecycle behavior.
+  The broader schedule recovery/journal candidate is excluded. Native schedule
+  write testing remains paused; duplicate execution is unresolved.
+- Advance the integration version to 0.3.5 (version code 3005).
+- Validate offline with 363 passing tests, including 14 new post-prime execution
+  cases and 22 new passive-trace cases; Ruff lint/format and compilation pass.
+
 ## [0.3.4] - 2026-09-02
 
 ### REST reliability
