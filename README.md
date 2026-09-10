@@ -25,7 +25,7 @@ TCX Direct connects Home Assistant directly to the iAquaLink/Zodiac cloud. It do
 
 ## Current version
 
-**v0.3.6**
+**v0.3.7**
 
 Release notes and downloads: [GitHub Releases](https://github.com/sidewinder00/tcx-direct-homeassistant/releases).
 Native schedule management remains experimental and disabled by default.
@@ -139,7 +139,7 @@ transmission. The integration never forces a controller out of maintenance mode.
 Freeze Protection Setpoint remains read-only and has no unit until its unit
 behavior is independently established.
 
-Integration Version is an enabled diagnostic sensor that displays the installed semantic release, currently `0.3.6`, and remains available when TCX cloud data is unavailable. Its numeric `version_code` attribute uses `major × 1,000,000 + minor × 1,000 + patch`, so v0.2.11 is `2011` and v0.3.6 is `3006` without treating a semantic version as a decimal number.
+Integration Version is an enabled diagnostic sensor that displays the installed semantic release, currently `0.3.7`, and remains available when TCX cloud data is unavailable. Its numeric `version_code` attribute uses `major × 1,000,000 + minor × 1,000 + patch`, so v0.2.11 is `2011` and v0.3.7 is `3007` without treating a semantic version as a decimal number.
 
 The `tcx_direct.start_pump_at_speed` action targets the Pump Power switch and accepts
 an `rpm` value. It confirms the persistent filtration preset before starting a
@@ -161,6 +161,21 @@ Equipment air temperature is disabled by default and requires a recognized live
 reading; unexplained values are not interpreted as temperatures. Native salt-water
 chlorinator level remains disabled by default until supported equipment is
 identified.
+
+### Pump-speed confirmation in v0.3.7
+
+Pump-speed writes now wait up to 45 seconds for the reported filtration setpoint,
+instead of 15 seconds. Capture 49 showed a timeout followed by motor and filtration
+updates about 21–22 seconds after the command, with the final state at the requested
+1200 RPM. This change allows more time for that delayed reported confirmation.
+
+The shared speed setter applies this window to manual speed, Waterfall speed and
+post-prime corrective writes. It still sends once, with no timeout resend or REST
+refresh. The control lock remains held during setpoint confirmation, so queued
+equipment commands can wait longer when confirmation is absent. The separate
+post-prime motor observation window remains 45 seconds within its overall deadline.
+This does not change Waterfall priority or clear historical failures automatically.
+Diagnostics expose `pump_speed_confirmation_timeout_seconds`.
 
 ### Post-prime speed correction in v0.3.5
 

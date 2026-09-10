@@ -2,6 +2,22 @@
 
 All notable changes to Jandy TCX Direct are documented here.
 
+## [0.3.7] - 2026-09-10
+
+### Pump-speed confirmation
+
+- Extend the shared pump-speed setter's reported-setpoint confirmation window from
+  15 to 45 seconds. Capture 49's late motor/filtration updates and final 1200 RPM
+  state support delayed confirmation after the earlier timeout.
+- Preserve the existing confirmation predicate and single send. No REST refresh,
+  automatic retry, historical-error reconciliation or Waterfall priority changes.
+  Manual, Waterfall and post-prime corrective speed writes use the shared setter;
+  queued controls may wait longer while it holds the control lock for confirmation.
+- Expose the speed confirmation timeout in diagnostic downloads. Retain v0.3.6's
+  slower REST recovery and normal two-minute polling. Native write testing is paused.
+- Validate with 375 offline tests, including delayed-arrival and real-timeout cases.
+  Advance Integration Version to 0.3.7 and numeric version code to 3007.
+
 ## [0.3.6] - 2026-09-10
 
 ### Slower recovery after REST rate limiting
