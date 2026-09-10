@@ -352,9 +352,14 @@ def test_recovery_requires_two_successes_and_preserves_pressure_after_one(monkey
             await client.async_get_shadow()
         assert client.shadow_poll_interval == 480
         clock.advance(client.shadow_cooldown_remaining)
-        for expected in (480, 240, 240, 120):
+        for expected in (480, 480):
             await client.async_get_shadow()
             assert client.shadow_poll_interval == expected
+        clock.advance(api.SHADOW_RATE_LIMIT_RECOVERY_SECONDS - 480)
+        await client.async_get_shadow()
+        assert client.shadow_poll_interval == 360
+        await client.async_get_shadow()
+        assert client.shadow_poll_interval == 360
 
     asyncio.run(run())
 
@@ -384,8 +389,9 @@ def test_local_backoff_is_capped_and_non_rate_failure_breaks_success_streak(monk
             await client.async_get_shadow()
         await client.async_get_shadow()
         assert client.shadow_poll_interval == 1800
+        clock.advance(api.SHADOW_RATE_LIMIT_RECOVERY_SECONDS)
         await client.async_get_shadow()
-        assert client.shadow_poll_interval == 900
+        assert client.shadow_poll_interval == 1350
 
     asyncio.run(run())
 

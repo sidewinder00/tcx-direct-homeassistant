@@ -25,7 +25,7 @@ TCX Direct connects Home Assistant directly to the iAquaLink/Zodiac cloud. It do
 
 ## Current version
 
-**v0.3.5**
+**v0.3.6**
 
 Release notes and downloads: [GitHub Releases](https://github.com/sidewinder00/tcx-direct-homeassistant/releases).
 Native schedule management remains experimental and disabled by default.
@@ -139,7 +139,7 @@ transmission. The integration never forces a controller out of maintenance mode.
 Freeze Protection Setpoint remains read-only and has no unit until its unit
 behavior is independently established.
 
-Integration Version is an enabled diagnostic sensor that displays the installed semantic release, currently `0.3.5`, and remains available when TCX cloud data is unavailable. Its numeric `version_code` attribute uses `major × 1,000,000 + minor × 1,000 + patch`, so v0.2.11 is `2011` and v0.3.5 is `3005` without treating a semantic version as a decimal number.
+Integration Version is an enabled diagnostic sensor that displays the installed semantic release, currently `0.3.6`, and remains available when TCX cloud data is unavailable. Its numeric `version_code` attribute uses `major × 1,000,000 + minor × 1,000 + patch`, so v0.2.11 is `2011` and v0.3.6 is `3006` without treating a semantic version as a decimal number.
 
 The `tcx_direct.start_pump_at_speed` action targets the Pump Power switch and accepts
 an `rpm` value. It confirms the persistent filtration preset before starting a
@@ -207,8 +207,20 @@ WebSocket transport. Reads are serialized, and queued readers recheck the deadli
 They are not satisfied from an older cached response.
 
 The server's retry minimum is not shortened by the integration's local backoff cap.
-Local backoff halves only after two consecutive successful reads, down to the normal
-120-second polling interval. Healthy WebSocket updates and equipment commands remain
+Version 0.3.6 keeps normal polling at 120 seconds. After a 429, the increased interval
+is held for at least one hour from that response. A successful read can then reduce
+it by 25% only after at least two consecutive successful reads. Each reduction starts
+another one-hour hold, and another 429 restarts the hold and increases backoff as
+before. Recovery never goes below 120 seconds or catches up multiple steps after
+an idle period. A non-rate-limit failure resets the success streak. The hold controls
+when polling can accelerate; it does not suspend polling for an hour.
+
+For example, after one 429 the local interval rises from 120 to 240 seconds. With
+successful reads, it can recover to 180, then 135, then 120 seconds, with at least an
+hour before each reduction. These are local policies, not a known vendor quota or
+a guarantee of zero 429s. Normal polling does not change based on WebSocket health.
+
+Healthy WebSocket updates and equipment commands remain
 available during REST cooldown; an unconfirmed command still times out and is not
 automatically resent. Native schedule testing remains paused.
 

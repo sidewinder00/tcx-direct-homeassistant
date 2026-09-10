@@ -2,6 +2,25 @@
 
 All notable changes to Jandy TCX Direct are documented here.
 
+## [0.3.6] - 2026-09-10
+
+### Slower recovery after REST rate limiting
+
+- Keep normal REST polling at 120 seconds. After a 429, hold the increased polling
+  interval for at least one hour; require at least two consecutive successful reads
+  before reducing it by 25%. Allow at most one reduction per hour, never below 120
+  seconds. A new 429 restarts the recovery hold and retains existing backoff growth.
+- Preserve the server Retry-After minimum, shared cooldown, local backoff cap and
+  command confirmation behavior. The one-hour hold prevents acceleration; polling
+  continues at the increased interval. No WebSocket-dependent polling policy added.
+- This targets repeated acceleration after short successful streaks; capture 48's
+  aggregate counters do not prove that mechanism caused every 429. Equipment and
+  cloud validation are still needed. State remains local to the client session.
+- Keep the v0.3.5 speed correction and passive schedule diagnostics. Broader native
+  schedule changes remain excluded and native write testing stays paused.
+- Validate with 371 offline tests, including eight new recovery cases. Advance
+  Integration Version to 0.3.6 and numeric version code to 3006.
+
 ## [0.3.5] - 2026-09-08
 
 ### Post-prime speed correction

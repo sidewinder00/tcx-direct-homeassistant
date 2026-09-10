@@ -40,6 +40,7 @@ from .const import (
     RECONNECT_MAX,
     SHADOW_INTERVAL,
     SHADOW_RATE_LIMIT_MAX_INTERVAL,
+    SHADOW_RATE_LIMIT_RECOVERY_SECONDS,
     SHADOW_RATE_LIMIT_RECOVERY_SUCCESSES,
     TOKEN_REFRESH_MARGIN,
     WATCHDOG_RESUBSCRIBE_TIMEOUT,
@@ -792,6 +793,7 @@ class TCXClient:
         self.shadow_poll_interval = SHADOW_INTERVAL
         self._shadow_cooldown_until = 0.0
         self._shadow_recovery_successes = 0
+        self._shadow_recovery_not_before = 0.0
         self.last_shadow_error: str | None = None
         self.last_shadow_rate_limited_at: str | None = None
         self.watchdog_resubscribe_count = 0
@@ -1018,6 +1020,7 @@ class TCXClient:
         self.last_shadow_rate_limited_at = _utc_now_iso()
         self.last_shadow_error = str(err)
         self._shadow_recovery_successes = 0
+        self._shadow_recovery_not_before = time.monotonic() + SHADOW_RATE_LIMIT_RECOVERY_SECONDS
         self.shadow_poll_interval = min(
             SHADOW_RATE_LIMIT_MAX_INTERVAL,
             max(SHADOW_INTERVAL * 2, self.shadow_poll_interval * 2),
@@ -1048,9 +1051,19 @@ class TCXClient:
                 self._shadow_recovery_successes = 0
                 raise
             self._shadow_recovery_successes += 1
-            if self._shadow_recovery_successes >= SHADOW_RATE_LIMIT_RECOVERY_SUCCESSES:
-                self.shadow_poll_interval = max(SHADOW_INTERVAL, self.shadow_poll_interval / 2)
+            if (
+                self.shadow_poll_interval > SHADOW_INTERVAL
+                and self._shadow_recovery_successes >= SHADOW_RATE_LIMIT_RECOVERY_SUCCESSES
+                and time.monotonic() >= self._shadow_recovery_not_before
+            ):
+                # Successful probes alone do not establish a sustainable faster
+                # cadence. Recover at most one step per hour; never catch up
+                # multiple steps after a long cooldown or idle period.
+                self.shadow_poll_interval = max(SHADOW_INTERVAL, self.shadow_poll_interval * 0.75)
                 self._shadow_recovery_successes = 0
+                self._shadow_recovery_not_before = (
+                    time.monotonic() + SHADOW_RATE_LIMIT_RECOVERY_SECONDS
+                )
             return result
 
     async def _async_get_shadow(self) -> dict[str, Any]:
