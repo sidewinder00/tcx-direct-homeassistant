@@ -34,6 +34,7 @@ from .const import (
     POST_PRIME_SYNC_INTERVAL,
     POST_PRIME_SYNC_TIMEOUT,
     PUMP_POWER_CONFIRM_TIMEOUT,
+    PUMP_SPEED_CONFIRM_TIMEOUT,
     RECENT_CONTROLLER_MODE_TRANSITIONS,
     RECENT_POST_PRIME_TRANSITIONS,
     RECENT_WS_STRUCTURES,
@@ -1872,6 +1873,7 @@ class TCXClient:
                 and (actual := _coerce_number(confirmed[1].get("manSpd"))) is not None
                 and round(actual) == requested
             ),
+            confirmation_timeout=PUMP_SPEED_CONFIRM_TIMEOUT,
         )
 
     def _record_ws_structure(self, data: dict[str, Any]) -> None:
