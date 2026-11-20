@@ -376,20 +376,22 @@ def _ws_structure(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def _tcx_temperature(value: Any) -> float | None:
-    """Decode common TCX temperature representations to Fahrenheit.
+    """Decode a TCX temperature (tenths of a degree Celsius) to Fahrenheit.
 
-    TCX live state may report temperatures directly in Fahrenheit on some
-    firmware and as tenths of a degree Celsius on others. Values above the
-    normal direct-Fahrenheit range are treated as tenths-Celsius.
+    Every TCX temperature field observed so far (water, air, waterTempSet,
+    lowAirSP, freezeSP) is tenths of a degree Celsius. The controller keeps
+    whole degrees Fahrenheit internally, so 58 F arrives as 144 and 38 F as 33.
+
+    Earlier versions treated raw values from -40 to 150 as direct Fahrenheit,
+    so any reading below 15.0 C (59 F) was shown as ten times its Celsius value
+    (raw 144 = 57.9 F displayed as 144 F) and readings below -4.0 C became
+    unavailable. Sentinels such as hubAir's -1311 fall outside the accepted
+    -40 C..80 C range and return None.
     """
     number = _coerce_number(value)
-    if number is None:
+    if number is None or not -400 <= number <= 800:
         return None
-    if 150 <= number <= 600:
-        return round((number / 10.0) * 9.0 / 5.0 + 32.0, 1)
-    if -40 <= number <= 150:
-        return round(number, 1)
-    return None
+    return round((number / 10.0) * 9.0 / 5.0 + 32.0, 1)
 
 
 def _find_in_named_object(
@@ -698,7 +700,9 @@ def normalize_tcx_state(reported: dict[str, Any]) -> dict[str, Any]:
         system_mode_code == CONTROLLER_MODE_AUTO if system_mode_code is not None else None
     )
 
-    freeze_protection_setpoint = _coerce_number(reported.get("freezeSP"))
+    # freezeSP uses the same tenths-Celsius encoding (33 => 37.9 F, the TCX's
+    # 38 F freeze-protection threshold), not raw Fahrenheit.
+    freeze_protection_setpoint = _tcx_temperature(reported.get("freezeSP"))
 
     return {
         "pool_temperature": pool_temperature,

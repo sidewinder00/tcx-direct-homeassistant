@@ -133,6 +133,7 @@ SENSORS = (
         key="freeze_protection_setpoint",
         data_key="freeze_protection_setpoint",
         name="Freeze Protection Setpoint",
+        native_unit_of_measurement=UnitOfTemperature.FAHRENHEIT,
         suggested_display_precision=0,
         icon="mdi:snowflake-thermometer",
         entity_category=EntityCategory.DIAGNOSTIC,

@@ -25,7 +25,7 @@ TCX Direct connects Home Assistant directly to the iAquaLink/Zodiac cloud. It do
 
 ## Current version
 
-**v0.3.7**
+**v0.3.8**
 
 Release notes and downloads: [GitHub Releases](https://github.com/sidewinder00/tcx-direct-homeassistant/releases).
 Native schedule management remains experimental and disabled by default.
@@ -136,10 +136,11 @@ Controller Mode is read-only and recognizes Auto, Quick Clean, Service, Time Out
 and Transitioning. Unknown numeric values remain visible as unknown codes.
 Equipment controls are unavailable outside Auto, and commands are checked before
 transmission. The integration never forces a controller out of maintenance mode.
-Freeze Protection Setpoint remains read-only and has no unit until its unit
-behavior is independently established.
+Freeze Protection Setpoint is read-only and reported in °F. Like every TCX
+temperature, `freezeSP` arrives as tenths of a degree Celsius (33 is 37.9 °F, the
+controller's 38 °F threshold).
 
-Integration Version is an enabled diagnostic sensor that displays the installed semantic release, currently `0.3.7`, and remains available when TCX cloud data is unavailable. Its numeric `version_code` attribute uses `major × 1,000,000 + minor × 1,000 + patch`, so v0.2.11 is `2011` and v0.3.7 is `3007` without treating a semantic version as a decimal number.
+Integration Version is an enabled diagnostic sensor that displays the installed semantic release, currently `0.3.8`, and remains available when TCX cloud data is unavailable. Its numeric `version_code` attribute uses `major × 1,000,000 + minor × 1,000 + patch`, so v0.2.11 is `2011` and v0.3.8 is `3008` without treating a semantic version as a decimal number.
 
 The `tcx_direct.start_pump_at_speed` action targets the Pump Power switch and accepts
 an `rpm` value. It confirms the persistent filtration preset before starting a
@@ -161,6 +162,20 @@ Equipment air temperature is disabled by default and requires a recognized live
 reading; unexplained values are not interpreted as temperatures. Native salt-water
 chlorinator level remains disabled by default until supported equipment is
 identified.
+
+### Temperature decoding in v0.3.8
+
+Every TCX temperature field is tenths of a degree Celsius. The controller keeps
+whole degrees Fahrenheit internally, so overnight air readings arrive as 117, 122,
+128, 133, 139 and 144: exactly 53–58 °F. Earlier versions treated raw values from
+−40 to 150 as direct Fahrenheit. Any reading below 59 °F was shown as ten times its
+Celsius value (raw 144, really 57.9 °F, appeared as 144 °F), and readings below
+−4 °C (24.8 °F) became unavailable, which is when freeze protection matters most.
+
+Pool temperature, equipment air temperature, pool temperature setpoint and Freeze
+Protection Setpoint now all decode as tenths of a degree Celsius. Raw values outside
+−40 °C to 80 °C, such as the −1311 sentinel, are rejected. Freeze Protection
+Setpoint now reports °F (raw 33 is 37.9 °F). Readings of 59 °F and above are unchanged.
 
 ### Pump-speed confirmation in v0.3.7
 
