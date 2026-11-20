@@ -2,6 +2,24 @@
 
 All notable changes to Jandy TCX Direct are documented here.
 
+## [0.3.8] - 2026-11-20
+
+### Temperature decoding
+
+- Decode every TCX temperature as tenths of a degree Celsius. The previous decoder
+  treated raw values from -40 to 150 as direct Fahrenheit, so any reading below 59 °F
+  was shown as ten times its Celsius value (raw 144 = 57.9 °F displayed as 144 °F).
+  Readings below -4 °C (24.8 °F) became unavailable, breaking freeze logic in a hard
+  freeze. Overnight air readings of 117/122/128/133/139/144 are exactly 53–58 °F,
+  consistent with a controller that keeps whole °F internally.
+- Accept raw -400..800 (-40 °C to 80 °C) and reject anything else, including the
+  -1311 sentinel. Readings of 59 °F and above are unchanged.
+- Decode `freezeSP` the same way (raw 33 = 37.9 °F, the TCX's 38 °F freeze threshold)
+  and give Freeze Protection Setpoint a °F unit.
+- Validate with 401 offline tests, including raw-value decoding, sentinel rejection
+  and a cold-state normalization case. Advance Integration Version to 0.3.8 and
+  numeric version code to 3008.
+
 ## [0.3.7] - 2026-09-10
 
 ### Pump-speed confirmation

@@ -30,6 +30,27 @@ def test_entity_categories_use_home_assistant_enum() -> None:
     ), categories
 
 
+def test_temperature_sensors_report_fahrenheit() -> None:
+    path = Path("custom_components/tcx_direct/sensor.py")
+    tree = ast.parse(path.read_text(), filename=str(path))
+    units: dict[str, str | None] = {}
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or ast.unparse(node.func) != "TCXSensorDescription":
+            continue
+        keywords = {keyword.arg: keyword.value for keyword in node.keywords}
+        unit = keywords.get("native_unit_of_measurement")
+        units[ast.literal_eval(keywords["key"])] = ast.unparse(unit) if unit else None
+
+    for key in (
+        "pool_temperature",
+        "air_temperature",
+        "pool_temperature_setpoint",
+        "freeze_protection_setpoint",
+    ):
+        assert units[key] == "UnitOfTemperature.FAHRENHEIT", key
+
+
 def test_status_points_and_writable_controls_remain_separate() -> None:
     binary_sensor = Path("custom_components/tcx_direct/binary_sensor.py").read_text()
     switch = Path("custom_components/tcx_direct/switch.py").read_text()

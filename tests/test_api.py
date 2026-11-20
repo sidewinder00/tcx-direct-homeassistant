@@ -121,8 +121,61 @@ def test_normalize_observed_tcx_state() -> None:
     assert normalized["controller_mode"] == "Auto"
     assert normalized["system_mode_code"] == 1
     assert normalized["remote_control_available"] is True
-    assert normalized["freeze_protection_setpoint"] == 33
+    assert normalized["freeze_protection_setpoint"] == 37.9
     assert normalized["swc_level"] is None
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        (317, 89.1),
+        (266, 79.9),
+        (150, 59.0),
+        # Whole-degree Fahrenheit readings below 59 F, previously shown as 10x Celsius.
+        (144, 57.9),
+        (139, 57.0),
+        (133, 55.9),
+        (128, 55.0),
+        (122, 54.0),
+        (117, 53.1),
+        (33, 37.9),
+        (0, 32.0),
+        # Below -4.0 C, previously reported as unavailable.
+        (-41, 24.6),
+        (-400, -40.0),
+        (800, 176.0),
+        ("144", 57.9),
+    ],
+)
+def test_tcx_temperature_decodes_tenths_celsius(raw: object, expected: float) -> None:
+    assert api._tcx_temperature(raw) == expected
+
+
+@pytest.mark.parametrize("raw", [None, True, "", "n/a", "nan", -1311, -401, 801])
+def test_tcx_temperature_rejects_sentinels_and_out_of_range(raw: object) -> None:
+    assert api._tcx_temperature(raw) is None
+
+
+def test_normalize_cold_tcx_state_decodes_tenths_celsius() -> None:
+    normalized = api.normalize_tcx_state(
+        {
+            "freezeSP": 33,
+            "water": {"value": 144, "us": 1},
+            "air": {"value": -50, "us": 1},
+            "TspBdy0": {"waterTempSet": 128},
+        }
+    )
+
+    assert normalized["pool_temperature"] == 57.9
+    assert normalized["air_temperature"] == 23.0
+    assert normalized["pool_temperature_setpoint"] == 55.0
+    assert normalized["freeze_protection_setpoint"] == 37.9
+
+
+def test_normalize_rejects_air_temperature_sentinel() -> None:
+    normalized = api.normalize_tcx_state({"air": {"value": -1311, "us": 4}})
+
+    assert normalized["air_temperature"] is None
 
 
 def test_pump_priming_reports_commanded_rpm_and_requested_preset() -> None:
